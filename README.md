@@ -1,20 +1,34 @@
 # PalSpawn
 
-Web-UI für Palworld-Server mit [PalDefender](https://www.nexusmods.com/palworld/mods/451):
-zeigt alle Palworld-Items (mit Bild, deutschem + englischem Namen), durchsuch-, filter- und
-sortierbar — und spawnt ausgewählte Items in gewünschter Menge direkt ins Inventar eines
-Spielers, der gerade auf dem Server online ist.
+Web-UI für Palworld-Server: zeigt alle Palworld-Items (mit Bild, deutschem + englischem
+Namen), durchsuch-, filter- und sortierbar — und spawnt ausgewählte Items in gewünschter
+Menge direkt ins Inventar eines Spielers, der gerade auf dem Server online ist.
 
-- **Spielerliste** kommt von der offiziellen Palworld **REST API** (`/v1/api/players`)
-- **Item-Spawn** läuft über **RCON** mit dem PalDefender-Befehl `give <UserId> <ItemId> <Amount>`
-- 2453 Items inkl. Icons sind ins Image gebundelt (keine Internetverbindung zur Laufzeit nötig)
+2453 Items inkl. Icons sind ins Image gebundelt (keine Internetverbindung zur Laufzeit nötig).
 
-## Voraussetzungen auf dem Palworld-Server
+## Zwei Backends
 
-1. **PalDefender** ist installiert (der Vanilla-Server hat keinen Give-Befehl).
-2. **REST API aktiviert** — in `PalWorldSettings.ini`:
-   `RESTAPIEnabled=True`, `RESTAPIPort=8212`, `AdminPassword="..."`.
-3. **RCON aktiviert** — `RCONEnabled=True`, `RCONPort=25575` (Passwort = AdminPassword).
+### 1. `paladdon` (Standard, sobald `BRIDGE_URL` gesetzt ist)
+
+Für den palchaos-Server (GE-Proton + UE4SS + PalChaos-Mod, **kein RCON**):
+Spielerliste aus `GET /api/status` der [Paladdon-Bridge](../paladdon), Item-Spawn als
+`giveItem`-Steps über `POST /api/command` (Bearer `ADMIN_TOKEN` der Bridge).
+Volles Inventar meldet der Mod als Fehler pro Item zurück.
+
+| Variable | Pflicht | Beschreibung |
+|---|---|---|
+| `BRIDGE_URL` | ja | z. B. `http://<unraid-ip>:8420` |
+| `BRIDGE_TOKEN` | ja | `ADMIN_TOKEN` der Paladdon-Bridge |
+
+### 2. `paldefender` (Fallback für Server mit RCON)
+
+Für Server mit [PalDefender](https://www.nexusmods.com/palworld/mods/451):
+Spielerliste über die offizielle REST API (`/v1/api/players`), Item-Spawn per RCON
+(`give <UserId> <ItemId> <Amount>`). Voraussetzungen: PalDefender installiert,
+`RESTAPIEnabled=True` (Port 8212) und `RCONEnabled=True` (Port 25575) in der
+`PalWorldSettings.ini`. Umgebungsvariablen siehe Tabelle unten.
+
+`BACKEND=paladdon|paldefender` erzwingt einen Modus explizit.
 
 ## Deployment in Unraid
 
@@ -32,8 +46,11 @@ In Unraid: **Docker → Add Container**
 
 | Variable | Pflicht | Default | Beschreibung |
 |---|---|---|---|
-| `PALWORLD_API_URL` | ja | – | z. B. `http://192.168.1.50:8212` |
-| `PALWORLD_API_PASS` | ja | – | AdminPassword des Servers |
+| `BRIDGE_URL` | Backend paladdon | – | Paladdon-Bridge, z. B. `http://192.168.1.50:8420` |
+| `BRIDGE_TOKEN` | Backend paladdon | – | `ADMIN_TOKEN` der Bridge |
+| `BACKEND` | nein | auto | `paladdon` wenn `BRIDGE_URL` gesetzt, sonst `paldefender` |
+| `PALWORLD_API_URL` | Backend paldefender | – | z. B. `http://192.168.1.50:8212` |
+| `PALWORLD_API_PASS` | Backend paldefender | – | AdminPassword des Servers |
 | `PALWORLD_API_USER` | nein | `admin` | Basic-Auth-User der REST API |
 | `RCON_HOST` | nein | Host aus `PALWORLD_API_URL` | IP des Palworld-Servers |
 | `RCON_PORT` | nein | `25575` | RCON-Port |
@@ -48,6 +65,14 @@ In Unraid: **Docker → Add Container**
 ### Beispiel (docker run)
 
 ```bash
+# palchaos-Server (Paladdon-Bridge):
+docker run -d --name palspawn \
+  -p 8080:8080 \
+  -e BRIDGE_URL=http://192.168.1.50:8420 \
+  -e BRIDGE_TOKEN=meinAdminToken \
+  ghcr.io/patriqcs/palspawn:latest
+
+# Alternativ (PalDefender-Server):
 docker run -d --name palspawn \
   -p 8080:8080 \
   -e PALWORLD_API_URL=http://192.168.1.50:8212 \

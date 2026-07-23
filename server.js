@@ -5,6 +5,11 @@ const net = require('net');
 const path = require('path');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
+// Backend "paladdon": Spielerliste + giveItem über die Paladdon-Bridge
+// (PalChaos-UE4SS-Mod, File-IPC — der Server hat kein RCON).
+const BRIDGE_URL = (process.env.BRIDGE_URL || '').replace(/\/+$/, '');
+const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || '';
+// Backend "paldefender": offizielle REST API + PalDefender-give über RCON.
 const PALWORLD_API_URL = (process.env.PALWORLD_API_URL || '').replace(/\/+$/, '');
 const PALWORLD_API_USER = process.env.PALWORLD_API_USER || 'admin';
 const PALWORLD_API_PASS = process.env.PALWORLD_API_PASS || '';
@@ -12,6 +17,7 @@ const RCON_HOST = process.env.RCON_HOST || (PALWORLD_API_URL ? new URL(PALWORLD_
 const RCON_PORT = parseInt(process.env.RCON_PORT || '25575', 10);
 const RCON_PASSWORD = process.env.RCON_PASSWORD || PALWORLD_API_PASS;
 const GIVE_COMMAND_TEMPLATE = process.env.GIVE_COMMAND_TEMPLATE || 'give {userId} {itemId} {amount}';
+const BACKEND = process.env.BACKEND || (BRIDGE_URL ? 'paladdon' : 'paldefender');
 const APP_USER = process.env.APP_USER || '';
 const APP_PASS = process.env.APP_PASS || '';
 
@@ -141,15 +147,68 @@ class Rcon {
 // API
 // ---------------------------------------------------------------------------
 
+async function bridgeFetch(pathName, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${BRIDGE_URL}${pathName}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${BRIDGE_TOKEN}`,
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...options.headers,
+      },
+      signal: controller.signal,
+    });
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error('Paladdon-Bridge: BRIDGE_TOKEN ungültig');
+    }
+    if (!resp.ok) throw new Error(`Paladdon-Bridge antwortet mit HTTP ${resp.status}`);
+    return await resp.json();
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Paladdon-Bridge: Timeout');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 app.get('/api/config', (req, res) => {
   res.json({
-    apiConfigured: Boolean(PALWORLD_API_URL && PALWORLD_API_PASS),
+    backend: BACKEND,
+    apiConfigured: BACKEND === 'paladdon'
+      ? Boolean(BRIDGE_URL && BRIDGE_TOKEN)
+      : Boolean(PALWORLD_API_URL && PALWORLD_API_PASS),
     rconConfigured: Boolean(RCON_HOST && RCON_PASSWORD),
     rconHost: RCON_HOST ? `${RCON_HOST}:${RCON_PORT}` : null,
+    bridge: BRIDGE_URL || null,
   });
 });
 
 app.get('/api/players', async (req, res) => {
+  if (BACKEND === 'paladdon') {
+    if (!BRIDGE_URL || !BRIDGE_TOKEN) {
+      return res.status(503).json({ error: 'BRIDGE_URL/BRIDGE_TOKEN ist nicht konfiguriert' });
+    }
+    try {
+      const status = await bridgeFetch('/api/status');
+      const mod = status.mod || {};
+      const modStatus = mod.status || {};
+      const players = (modStatus.players || []).map((p) => ({
+        name: p.name,
+        userId: p.uid,
+        level: p.level ?? null,
+      }));
+      return res.json({
+        players,
+        modAlive: mod.alive !== false,
+        playersStale: modStatus.playersStale === true,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: err.message });
+    }
+  }
   if (!PALWORLD_API_URL) {
     return res.status(503).json({ error: 'PALWORLD_API_URL ist nicht konfiguriert' });
   }
@@ -178,7 +237,7 @@ app.get('/api/players', async (req, res) => {
 
 app.post('/api/give', async (req, res) => {
   const { userId, items } = req.body || {};
-  if (!RCON_HOST || !RCON_PASSWORD) {
+  if (BACKEND !== 'paladdon' && (!RCON_HOST || !RCON_PASSWORD)) {
     return res.status(503).json({ error: 'RCON_HOST/RCON_PASSWORD ist nicht konfiguriert' });
   }
   if (typeof userId !== 'string' || !/^[A-Za-z0-9_]+$/.test(userId)) {
@@ -194,6 +253,36 @@ app.post('/api/give', async (req, res) => {
     it.amount = parseInt(it.amount, 10);
     if (!Number.isInteger(it.amount) || it.amount < 1 || it.amount > 999999) {
       return res.status(400).json({ error: `Ungültige Menge für ${it.id}` });
+    }
+  }
+
+  if (BACKEND === 'paladdon') {
+    if (!BRIDGE_URL || !BRIDGE_TOKEN) {
+      return res.status(503).json({ error: 'BRIDGE_URL/BRIDGE_TOKEN ist nicht konfiguriert' });
+    }
+    try {
+      const steps = items.map((it) => ({ op: 'giveItem', itemId: it.id, count: it.amount }));
+      const resp = await bridgeFetch('/api/command', {
+        method: 'POST',
+        body: JSON.stringify({ steps, target: { uid: userId } }),
+      }, 90000);
+      if (resp.error) {
+        return res.status(502).json({ error: `Paladdon-Bridge: ${resp.error}`, results: [] });
+      }
+      const stepResults = Array.isArray(resp.results) ? resp.results : [];
+      const results = items.map((it, idx) => {
+        const r = stepResults[idx];
+        if (!r) return { id: it.id, amount: it.amount, ok: false, error: 'keine Antwort vom Mod' };
+        return {
+          id: it.id,
+          amount: it.amount,
+          ok: r.ok !== false,
+          ...(r.ok === false ? { error: r.error || 'Fehler im Mod (Inventar voll?)' } : {}),
+        };
+      });
+      return res.json({ results });
+    } catch (err) {
+      return res.status(502).json({ error: err.message, results: [] });
     }
   }
 

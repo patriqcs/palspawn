@@ -220,15 +220,23 @@ async function loadPlayers() {
       for (const p of state.players) {
         const opt = document.createElement('option');
         opt.value = p.userId;
-        opt.textContent = `${p.name} (Level ${p.level})`;
+        opt.textContent = p.level != null ? `${p.name} (Level ${p.level})` : p.name;
         els.playerSelect.appendChild(opt);
       }
       if ([...els.playerSelect.options].some((o) => o.value === prev)) {
         els.playerSelect.value = prev;
       }
     }
-    els.serverStatus.textContent = `${state.players.length} online`;
-    els.serverStatus.className = 'status ok';
+    if (data.modAlive === false) {
+      els.serverStatus.textContent = 'Mod offline!';
+      els.serverStatus.className = 'status err';
+    } else if (data.playersStale) {
+      els.serverStatus.textContent = `${state.players.length} online (Liste veraltet)`;
+      els.serverStatus.className = 'status';
+    } else {
+      els.serverStatus.textContent = `${state.players.length} online`;
+      els.serverStatus.className = 'status ok';
+    }
   } catch (err) {
     els.playerSelect.replaceChildren();
     const opt = document.createElement('option');
