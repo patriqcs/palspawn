@@ -24,6 +24,8 @@ const els = {
   log: $('#log'),
 };
 
+const RARITY_LABELS = ['Gewöhnlich', 'Ungewöhnlich', 'Selten', 'Episch', 'Legendär'];
+
 const CATEGORY_LABELS = {
   Accessory: 'Accessoires',
   Ammo: 'Munition',
@@ -88,6 +90,8 @@ function filteredItems() {
   else if (sort === 'category') list.sort((a, b) =>
     (CATEGORY_LABELS[a.category] || a.category).localeCompare(CATEGORY_LABELS[b.category] || b.category, 'de')
     || a.name_de.localeCompare(b.name_de, 'de'));
+  else if (sort === 'rarity') list.sort((a, b) =>
+    (b.rarity ?? -1) - (a.rarity ?? -1) || a.name_de.localeCompare(b.name_de, 'de'));
   return list;
 }
 
@@ -98,9 +102,12 @@ function render() {
   for (const item of list) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'item' + (state.cart.has(item.id) ? ' selected' : '');
+    btn.className = 'item'
+      + (state.cart.has(item.id) ? ' selected' : '')
+      + (item.rarity >= 1 && item.rarity <= 4 ? ` r${item.rarity}` : '');
     btn.dataset.id = item.id;
-    btn.title = `${item.name} (${item.id})`;
+    const rarity = RARITY_LABELS[item.rarity] ? ` – ${RARITY_LABELS[item.rarity]}` : '';
+    btn.title = `${item.name} (${item.id})${rarity}`;
 
     const img = document.createElement('img');
     img.loading = 'lazy';
@@ -152,7 +159,8 @@ function renderCart() {
     const item = state.items.find((i) => i.id === id);
     if (!item) continue;
     const row = document.createElement('div');
-    row.className = 'cart-row';
+    row.className = 'cart-row'
+      + (item.rarity >= 1 && item.rarity <= 4 ? ` r${item.rarity}` : '');
 
     const img = document.createElement('img');
     img.src = `icons/${item.icon}`;
