@@ -52,7 +52,7 @@ const CATEGORY_LABELS = {
 // ---------------------------------------------------------------------------
 
 async function loadItems() {
-  const resp = await fetch('items.json');
+  const resp = await fetch('items.json?v=2');
   state.items = await resp.json();
 
   const cats = [...new Set(state.items.map((i) => i.category))].sort((a, b) =>
