@@ -19,13 +19,13 @@ Spielers, der gerade auf dem Server online ist.
 ## Deployment in Unraid
 
 Image wird von GitHub Actions automatisch nach GHCR gebaut:
-`ghcr.io/<github-user>/palspawn:latest`
+`ghcr.io/patriqcs/palspawn:latest`
 
 In Unraid: **Docker → Add Container**
 
 | Feld | Wert |
 |---|---|
-| Repository | `ghcr.io/<github-user>/palspawn:latest` |
+| Repository | `ghcr.io/patriqcs/palspawn:latest` |
 | Port | `8080` → beliebiger Host-Port |
 
 ### Umgebungsvariablen
@@ -52,7 +52,7 @@ docker run -d --name palspawn \
   -p 8080:8080 \
   -e PALWORLD_API_URL=http://192.168.1.50:8212 \
   -e PALWORLD_API_PASS=meinAdminPasswort \
-  ghcr.io/<github-user>/palspawn:latest
+  ghcr.io/patriqcs/palspawn:latest
 ```
 
 ## Lokale Entwicklung
@@ -67,7 +67,7 @@ PALWORLD_API_URL=http://<server>:8212 PALWORLD_API_PASS=... node server.js
 
 1. Repository auf GitHub anlegen und pushen — der Workflow
    `.github/workflows/docker.yml` baut bei jedem Push auf `main` das Image
-   und veröffentlicht es unter `ghcr.io/<user>/palspawn`.
+   und veröffentlicht es unter `ghcr.io/patriqcs/palspawn`.
 2. Beim ersten Mal ggf. unter *Package settings* das Paket auf **public** stellen,
    damit Unraid ohne Login pullen kann.
 
