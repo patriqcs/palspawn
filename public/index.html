@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PalSpawn – Palworld Item Spawner</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="icons/T_itemicon_PalSphere_PalSphere.webp" type="image/webp">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img src="icons/T_itemicon_PalSphere_PalSphere.webp" alt="" width="28" height="28">
+    <h1>PalSpawn</h1>
+  </div>
+  <div class="player-bar">
+    <label for="player-select">Spieler:</label>
+    <select id="player-select"><option value="">– Server wird abgefragt –</option></select>
+    <button id="refresh-players" title="Spielerliste aktualisieren">&#x21bb;</button>
+    <span id="server-status" class="status"></span>
+  </div>
+</header>
+
+<div class="toolbar">
+  <input id="search" type="search" placeholder="Suchen… (deutscher/englischer Name oder Item-ID)" autocomplete="off">
+  <select id="category"><option value="">Alle Kategorien</option></select>
+  <select id="sort">
+    <option value="name_de">Sortierung: Name (DE) A–Z</option>
+    <option value="name_de_desc">Name (DE) Z–A</option>
+    <option value="name">Name (EN) A–Z</option>
+    <option value="id">Item-ID A–Z</option>
+    <option value="category">Kategorie</option>
+  </select>
+  <label class="toggle"><input type="checkbox" id="show-unnamed"> interne Items anzeigen</label>
+  <span id="result-count" class="count"></span>
+</div>
+
+<main>
+  <section id="grid" class="grid" aria-label="Itemliste"></section>
+
+  <aside id="cart">
+    <h2>Ausgewählte Items</h2>
+    <div id="cart-items" class="cart-items">
+      <p class="empty">Noch nichts ausgewählt.<br>Klicke links auf ein Item.</p>
+    </div>
+    <div class="cart-footer">
+      <button id="clear-cart" class="secondary">Leeren</button>
+      <button id="spawn" disabled>Spawnen</button>
+    </div>
+    <div id="log" class="log"></div>
+  </aside>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

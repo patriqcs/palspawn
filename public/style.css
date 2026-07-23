@@ -1,0 +1,277 @@
+/* palspawn — dark product UI, single amber accent (oklch, restrained) */
+
+:root {
+  --bg: oklch(0.17 0.008 60);
+  --surface: oklch(0.215 0.01 60);
+  --surface-2: oklch(0.26 0.012 60);
+  --border: oklch(0.33 0.012 60);
+  --ink: oklch(0.94 0.004 60);
+  --muted: oklch(0.74 0.012 60);
+  --accent: oklch(0.79 0.13 65);
+  --accent-hover: oklch(0.84 0.13 65);
+  --on-accent: oklch(0.2 0.03 65);
+  --success: oklch(0.78 0.14 150);
+  --danger: oklch(0.7 0.18 25);
+  --radius: 8px;
+  --z-sticky: 10;
+  font-size: 16px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, "Segoe UI", Inter, Roboto, sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+/* ---------- header ---------- */
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.brand img { display: block; }
+.brand h1 { font-size: 1.15rem; margin: 0; font-weight: 650; letter-spacing: 0.01em; }
+
+.player-bar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.player-bar label { color: var(--muted); }
+
+.status { font-size: 0.85rem; color: var(--muted); }
+.status.ok { color: var(--success); }
+.status.err { color: var(--danger); }
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 1.25rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+#search { flex: 1 1 16rem; }
+
+.count { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  user-select: none;
+  cursor: pointer;
+}
+.toggle input { accent-color: var(--accent); }
+
+/* ---------- form controls ---------- */
+
+input[type="search"],
+input[type="number"],
+select {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+}
+input::placeholder { color: var(--muted); }
+
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 150ms ease-out, border-color 150ms ease-out;
+}
+button:hover:not(:disabled) { background: var(--border); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+#spawn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  flex: 1;
+}
+#spawn:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+button.secondary { color: var(--muted); }
+
+/* ---------- layout ---------- */
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 21rem;
+  gap: 0;
+  align-items: start;
+}
+
+/* ---------- item grid ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+  gap: 0.5rem;
+  padding: 0.9rem 1.25rem 2rem;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4rem;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
+}
+.item:hover { border-color: var(--accent); background: var(--surface-2); }
+.item img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  flex-shrink: 0;
+  image-rendering: auto;
+}
+.item .txt { min-width: 0; }
+.item .nm {
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item .meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item.selected { border-color: var(--accent); }
+.item.selected .nm::after {
+  content: " ✓";
+  color: var(--accent);
+}
+
+.grid .none {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  padding: 2rem 0;
+  text-align: center;
+}
+
+/* ---------- cart ---------- */
+
+#cart {
+  position: sticky;
+  top: 3.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  max-height: calc(100vh - 3.4rem);
+  padding: 0.9rem 1.1rem;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+#cart h2 { margin: 0; font-size: 0.95rem; font-weight: 650; }
+
+.cart-items { overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.cart-items .empty { color: var(--muted); text-align: center; margin: 1.5rem 0; }
+
+.cart-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.cart-row img { width: 30px; height: 30px; object-fit: contain; flex-shrink: 0; }
+.cart-row .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+.cart-row input[type="number"] {
+  width: 5rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.85rem;
+}
+.cart-row .rm {
+  padding: 0.15rem 0.5rem;
+  color: var(--muted);
+  border: none;
+  background: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+.cart-row .rm:hover { color: var(--danger); background: none; }
+
+.cart-footer { display: flex; gap: 0.5rem; }
+
+/* ---------- result log ---------- */
+
+.log {
+  font-size: 0.8rem;
+  overflow-y: auto;
+  max-height: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.log .ok { color: var(--success); }
+.log .err { color: var(--danger); }
+.log .info { color: var(--muted); }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  #cart {
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+  .grid { padding: 0.75rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

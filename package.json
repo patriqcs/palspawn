@@ -1,0 +1,16 @@
+{
+  "name": "palspawn",
+  "version": "1.0.0",
+  "description": "Web-UI zum Spawnen von Palworld-Items in Spieler-Inventare via PalDefender-RCON",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
