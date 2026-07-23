@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Item Spawner</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -48,10 +48,36 @@
       <button id="clear-cart" class="secondary">Leeren</button>
       <button id="spawn" disabled>Spawnen</button>
     </div>
+
+    <details id="teleport">
+      <summary>Teleport</summary>
+      <div class="tp-body">
+        <div class="tp-row">
+          <button id="tp-getpos" class="secondary">Position holen</button>
+          <span id="tp-pos" class="tp-pos"></span>
+        </div>
+        <div class="tp-row tp-coords">
+          <input id="tp-x" type="number" step="any" placeholder="X" aria-label="X-Koordinate">
+          <input id="tp-y" type="number" step="any" placeholder="Y" aria-label="Y-Koordinate">
+          <input id="tp-z" type="number" step="any" placeholder="Z" aria-label="Z-Koordinate">
+          <button id="tp-go">Teleportieren</button>
+        </div>
+        <div class="tp-row">
+          <select id="tp-spots" aria-label="Gespeicherte Orte"><option value="">– gespeicherte Orte –</option></select>
+          <button id="tp-save" class="secondary" title="Aktuelle Koordinaten aus den Feldern speichern">Speichern</button>
+          <button id="tp-del" class="secondary" title="Gewählten Ort löschen">✕</button>
+        </div>
+        <div class="tp-row">
+          <select id="tp-player" aria-label="Zu Spieler teleportieren"><option value="">– zu Spieler –</option></select>
+          <button id="tp-toplayer">Dorthin</button>
+        </div>
+      </div>
+    </details>
+
     <div id="log" class="log"></div>
   </aside>
 </main>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

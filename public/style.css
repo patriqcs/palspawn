@@ -261,6 +261,26 @@ main {
 
 .cart-footer { display: flex; gap: 0.5rem; }
 
+/* ---------- teleport ---------- */
+
+#teleport summary {
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 650;
+  user-select: none;
+}
+#teleport summary::marker { color: var(--muted); }
+
+.tp-body { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.6rem; }
+
+.tp-row { display: flex; gap: 0.4rem; align-items: center; }
+.tp-row select { flex: 1; min-width: 0; }
+.tp-row button { flex-shrink: 0; }
+
+.tp-coords input { width: 100%; min-width: 0; padding: 0.35rem 0.45rem; font-size: 0.85rem; }
+
+.tp-pos { color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---------- result log ---------- */
 
 .log {

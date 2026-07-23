@@ -22,6 +22,17 @@ const els = {
   clearCart: $('#clear-cart'),
   spawn: $('#spawn'),
   log: $('#log'),
+  tpGetpos: $('#tp-getpos'),
+  tpPos: $('#tp-pos'),
+  tpX: $('#tp-x'),
+  tpY: $('#tp-y'),
+  tpZ: $('#tp-z'),
+  tpGo: $('#tp-go'),
+  tpSpots: $('#tp-spots'),
+  tpSave: $('#tp-save'),
+  tpDel: $('#tp-del'),
+  tpPlayer: $('#tp-player'),
+  tpToplayer: $('#tp-toplayer'),
 };
 
 const RARITY_LABELS = ['Gewöhnlich', 'Ungewöhnlich', 'Selten', 'Episch', 'Legendär'];
@@ -255,6 +266,7 @@ async function loadPlayers() {
     els.serverStatus.className = 'status err';
   }
   updateSpawnButton();
+  renderTpPlayers();
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +318,148 @@ async function spawn() {
 }
 
 // ---------------------------------------------------------------------------
+// Teleport
+// ---------------------------------------------------------------------------
+
+const SPOTS_KEY = 'palspawn.spots';
+
+function loadSpots() {
+  try { return JSON.parse(localStorage.getItem(SPOTS_KEY)) || []; }
+  catch { return []; }
+}
+
+function renderSpots() {
+  const spots = loadSpots();
+  const prev = els.tpSpots.value;
+  els.tpSpots.replaceChildren();
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = spots.length ? '– gespeicherte Orte –' : '– keine Orte gespeichert –';
+  els.tpSpots.appendChild(ph);
+  spots.forEach((s, idx) => {
+    const opt = document.createElement('option');
+    opt.value = String(idx);
+    opt.textContent = s.name;
+    els.tpSpots.appendChild(opt);
+  });
+  if ([...els.tpSpots.options].some((o) => o.value === prev)) els.tpSpots.value = prev;
+}
+
+function renderTpPlayers() {
+  const current = els.playerSelect.value;
+  const prev = els.tpPlayer.value;
+  els.tpPlayer.replaceChildren();
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = '– zu Spieler –';
+  els.tpPlayer.appendChild(ph);
+  for (const p of state.players) {
+    if (p.userId === current) continue;
+    const opt = document.createElement('option');
+    opt.value = p.userId;
+    opt.textContent = p.name;
+    els.tpPlayer.appendChild(opt);
+  }
+  if ([...els.tpPlayer.options].some((o) => o.value === prev)) els.tpPlayer.value = prev;
+}
+
+function requirePlayer() {
+  const userId = els.playerSelect.value;
+  if (!userId) logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  return userId;
+}
+
+async function tpApi(path, body, okMsg) {
+  try {
+    const resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    if (okMsg) logLine(okMsg, 'ok');
+    return data;
+  } catch (err) {
+    logLine(`Teleport: ${err.message}`, 'err');
+    return null;
+  }
+}
+
+async function tpGetPos() {
+  const userId = requirePlayer();
+  if (!userId) return;
+  els.tpGetpos.disabled = true;
+  const data = await tpApi('api/pos', { userId });
+  els.tpGetpos.disabled = false;
+  if (!data) return;
+  const { x, y, z } = data.pos;
+  els.tpX.value = Math.round(x);
+  els.tpY.value = Math.round(y);
+  els.tpZ.value = Math.round(z);
+  els.tpPos.textContent = `${Math.round(x)} / ${Math.round(y)} / ${Math.round(z)}`;
+}
+
+async function tpGo() {
+  const userId = requirePlayer();
+  if (!userId) return;
+  const x = parseFloat(els.tpX.value), y = parseFloat(els.tpY.value), z = parseFloat(els.tpZ.value);
+  if ([x, y, z].some((v) => !Number.isFinite(v))) {
+    return logLine('Teleport: X, Y und Z ausfüllen (z. B. über „Position holen").', 'err');
+  }
+  els.tpGo.disabled = true;
+  await tpApi('api/teleport', { userId, mode: 'to', x, y, z },
+    `Teleportiert nach ${Math.round(x)} / ${Math.round(y)} / ${Math.round(z)}.`);
+  els.tpGo.disabled = false;
+}
+
+async function tpToPlayer() {
+  const userId = requirePlayer();
+  if (!userId) return;
+  const targetUid = els.tpPlayer.value;
+  if (!targetUid) return logLine('Teleport: Zielspieler auswählen.', 'err');
+  const target = state.players.find((p) => p.userId === targetUid);
+  els.tpToplayer.disabled = true;
+  await tpApi('api/teleport', { userId, mode: 'toPlayer', targetUid },
+    `Teleportiert zu ${target ? target.name : targetUid}.`);
+  els.tpToplayer.disabled = false;
+}
+
+function tpSaveSpot() {
+  const x = parseFloat(els.tpX.value), y = parseFloat(els.tpY.value), z = parseFloat(els.tpZ.value);
+  if ([x, y, z].some((v) => !Number.isFinite(v))) {
+    return logLine('Speichern: erst Koordinaten eintragen oder „Position holen".', 'err');
+  }
+  const name = (window.prompt('Name des Ortes:') || '').trim();
+  if (!name) return;
+  const spots = loadSpots();
+  spots.push({ name, x, y, z });
+  localStorage.setItem(SPOTS_KEY, JSON.stringify(spots));
+  renderSpots();
+  els.tpSpots.value = String(spots.length - 1);
+  logLine(`Ort „${name}" gespeichert.`, 'ok');
+}
+
+function tpDeleteSpot() {
+  const idx = parseInt(els.tpSpots.value, 10);
+  const spots = loadSpots();
+  if (!Number.isInteger(idx) || !spots[idx]) return;
+  const [removed] = spots.splice(idx, 1);
+  localStorage.setItem(SPOTS_KEY, JSON.stringify(spots));
+  renderSpots();
+  logLine(`Ort „${removed.name}" gelöscht.`, 'info');
+}
+
+function tpSelectSpot() {
+  const idx = parseInt(els.tpSpots.value, 10);
+  const spot = loadSpots()[idx];
+  if (!spot) return;
+  els.tpX.value = spot.x;
+  els.tpY.value = spot.y;
+  els.tpZ.value = spot.z;
+}
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
@@ -327,9 +481,16 @@ els.clearCart.addEventListener('click', () => {
   render();
 });
 els.refreshPlayers.addEventListener('click', loadPlayers);
-els.playerSelect.addEventListener('change', updateSpawnButton);
+els.playerSelect.addEventListener('change', () => { updateSpawnButton(); renderTpPlayers(); });
 els.spawn.addEventListener('click', spawn);
+els.tpGetpos.addEventListener('click', tpGetPos);
+els.tpGo.addEventListener('click', tpGo);
+els.tpToplayer.addEventListener('click', tpToPlayer);
+els.tpSave.addEventListener('click', tpSaveSpot);
+els.tpDel.addEventListener('click', tpDeleteSpot);
+els.tpSpots.addEventListener('change', tpSelectSpot);
 
 loadItems();
 loadPlayers();
+renderSpots();
 setInterval(loadPlayers, 60000);

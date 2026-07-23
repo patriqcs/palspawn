@@ -320,6 +320,85 @@ app.post('/api/give', async (req, res) => {
   }
 });
 
+function requireBridge(res) {
+  if (BACKEND !== 'paladdon') {
+    res.status(501).json({ error: 'Nur mit Paladdon-Bridge-Backend verfügbar' });
+    return false;
+  }
+  if (!BRIDGE_URL || !BRIDGE_TOKEN) {
+    res.status(503).json({ error: 'BRIDGE_URL/BRIDGE_TOKEN ist nicht konfiguriert' });
+    return false;
+  }
+  return true;
+}
+
+const UID_RE = /^[A-Za-z0-9_]+$/;
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+app.post('/api/pos', async (req, res) => {
+  if (!requireBridge(res)) return;
+  const { userId } = req.body || {};
+  if (typeof userId !== 'string' || !UID_RE.test(userId)) {
+    return res.status(400).json({ error: 'Ungültige userId' });
+  }
+  try {
+    const resp = await bridgeFetch('/api/command', {
+      method: 'POST',
+      body: JSON.stringify({ steps: [{ op: 'getPos' }], target: { uid: userId } }),
+    }, 30000);
+    const r = (resp.results || [])[0];
+    if (!r || r.ok === false || !r.data) {
+      return res.status(502).json({ error: (r && r.error) || resp.error || 'getPos fehlgeschlagen' });
+    }
+    res.json({ pos: { x: r.data.x, y: r.data.y, z: r.data.z } });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/teleport', async (req, res) => {
+  if (!requireBridge(res)) return;
+  const { userId, mode } = req.body || {};
+  if (typeof userId !== 'string' || !UID_RE.test(userId)) {
+    return res.status(400).json({ error: 'Ungültige userId' });
+  }
+  let step;
+  if (mode === 'to') {
+    const x = num(req.body.x), y = num(req.body.y), z = num(req.body.z);
+    if (x === null || y === null || z === null) {
+      return res.status(400).json({ error: 'x, y, z müssen Zahlen sein' });
+    }
+    step = { op: 'teleportTo', x, y, z };
+  } else if (mode === 'offset') {
+    const dx = num(req.body.dx) ?? 0, dy = num(req.body.dy) ?? 0, dz = num(req.body.dz) ?? 0;
+    step = { op: 'teleportOffset', dx, dy, dz };
+  } else if (mode === 'toPlayer') {
+    const targetUid = req.body.targetUid;
+    if (typeof targetUid !== 'string' || !UID_RE.test(targetUid)) {
+      return res.status(400).json({ error: 'Ungültige Ziel-userId' });
+    }
+    if (targetUid === userId) {
+      return res.status(400).json({ error: 'Quelle und Ziel sind derselbe Spieler' });
+    }
+    step = { op: 'teleportToPlayer', uid: targetUid };
+  } else {
+    return res.status(400).json({ error: 'mode muss to, offset oder toPlayer sein' });
+  }
+  try {
+    const resp = await bridgeFetch('/api/command', {
+      method: 'POST',
+      body: JSON.stringify({ steps: [step], target: { uid: userId } }),
+    }, 30000);
+    const r = (resp.results || [])[0];
+    if (!r || r.ok === false) {
+      return res.status(502).json({ error: (r && r.error) || resp.error || 'Teleport fehlgeschlagen' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 const server = app.listen(PORT, () => {
   console.log(`palspawn läuft auf Port ${PORT} (Backend: ${BACKEND})`);
   if (BACKEND === 'paladdon') {
