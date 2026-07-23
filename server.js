@@ -320,8 +320,22 @@ app.post('/api/give', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`palspawn läuft auf Port ${PORT}`);
-  console.log(`  REST API: ${PALWORLD_API_URL || '(nicht konfiguriert)'}`);
-  console.log(`  RCON:     ${RCON_HOST ? `${RCON_HOST}:${RCON_PORT}` : '(nicht konfiguriert)'}`);
+const server = app.listen(PORT, () => {
+  console.log(`palspawn läuft auf Port ${PORT} (Backend: ${BACKEND})`);
+  if (BACKEND === 'paladdon') {
+    console.log(`  Bridge: ${BRIDGE_URL || '(nicht konfiguriert)'}`);
+  } else {
+    console.log(`  REST API: ${PALWORLD_API_URL || '(nicht konfiguriert)'}`);
+    console.log(`  RCON:     ${RCON_HOST ? `${RCON_HOST}:${RCON_PORT}` : '(nicht konfiguriert)'}`);
+  }
 });
+
+// Als PID 1 im Container bekommt Node keine Default-Signal-Handler —
+// ohne diese Handler ignoriert der Prozess SIGTERM und Docker wartet
+// beim Stoppen bis zum Kill-Timeout.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}
