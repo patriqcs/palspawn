@@ -38,7 +38,17 @@ if (APP_USER && APP_PASS) {
   });
 }
 
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1d', immutable: false }));
+// Icons ändern sich praktisch nie → lange cachen; HTML/CSS/JS/items.json
+// müssen nach einem Container-Update sofort frisch kommen (ETag-Revalidierung).
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.webp')) {
+      res.set('Cache-Control', 'public, max-age=604800');
+    } else {
+      res.set('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Source RCON client (PalDefender speaks standard Source RCON)
