@@ -93,6 +93,7 @@ In Unraid: **Docker → Add Container**
 | `RCON_PORT` | nein | `25575` | RCON-Port |
 | `RCON_PASSWORD` | nein | `PALWORLD_API_PASS` | RCON-Passwort |
 | `GIVE_COMMAND_TEMPLATE` | nein | `give {userId} {itemId} {amount}` | Befehls-Template, falls abweichend |
+| `BANLIST_FILE` | nein | – | Pfad zur `banlist.txt` des Servers (read-only mounten, z. B. SaveGames-Ordner → `/palsaves`); schaltet die Bann-Auswahl beim Entbannen frei |
 | `APP_USER` / `APP_PASS` | nein | – | Wenn gesetzt: Basic-Auth-Login vor der Web-UI |
 | `PORT` | nein | `8080` | HTTP-Port der Web-UI |
 
