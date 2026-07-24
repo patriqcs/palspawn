@@ -1015,7 +1015,7 @@ const ID_RE = /^[A-Za-z0-9_]+$/;
 // vorhanden (z. B. announce), Rest der Params wird validiert/geklemmt.
 const BRIDGE_OPS = {
   announce: {
-    target: 'optional',
+    target: 'none',
     build(b) {
       const message = typeof b.message === 'string' ? b.message.trim() : '';
       if (!message || message.length > 300) return { error: 'message muss 1-300 Zeichen lang sein' };
@@ -1023,7 +1023,7 @@ const BRIDGE_OPS = {
     },
   },
   setGameHour: {
-    target: 'optional',
+    target: 'none',
     build(b) {
       const hour = clampInt(b.hour, 0, 23, null);
       if (hour === null) return { error: 'hour muss 0-23 sein' };
@@ -1093,11 +1093,11 @@ const BRIDGE_OPS = {
     build() { return { step: { op: 'getCaughtSpecies' } }; },
   },
   listBases: {
-    target: 'optional',
+    target: 'none',
     build() { return { step: { op: 'listBases' } }; },
   },
   getWorldTime: {
-    target: 'optional',
+    target: 'none',
     build() { return { step: { op: 'getWorldTime' } }; },
   },
   despawnWildPals: {
@@ -1113,7 +1113,7 @@ const BRIDGE_OPS = {
     },
   },
   disarm: {
-    target: 'optional',
+    target: 'none',
     build() { return { step: { op: 'disarm' } }; },
   },
   spawnPal: {
@@ -1156,7 +1156,10 @@ app.post('/api/bridge/op', async (req, res) => {
   const spec = BRIDGE_OPS[body.op];
   if (!spec) return res.status(400).json({ error: `Unbekannte Operation: ${body.op}` });
   let target;
-  if (typeof body.userId === 'string' && UID_RE.test(body.userId)) {
+  // 'none' = globale Op: NIE ein Target anhängen — eine veraltete
+  // Spielerauswahl (uids sind sitzungsgebunden) würde sonst den ganzen
+  // Batch mit "Spieler nicht gefunden" scheitern lassen.
+  if (spec.target !== 'none' && typeof body.userId === 'string' && UID_RE.test(body.userId)) {
     target = { uid: body.userId };
   } else if (spec.target === 'required') {
     return res.status(400).json({ error: 'Ungültige userId' });
