@@ -309,6 +309,24 @@ app.get('/api/players', async (req, res) => {
             : null,
         };
       });
+      // Nachzügler ohne steamId (z. B. Mod meldete leeren Namen): erst per
+      // Position matchen (beide Quellen liefern Welt-UU), dann — wenn genau
+      // ein Spieler auf beiden Seiten übrig ist — eindeutig paaren.
+      if (restByName.size) {
+        const used = new Set(players.map((p) => p.steamId).filter(Boolean));
+        const unmatchedRest = [...restByName.values()].filter((rp) => !used.has(rp.userId));
+        const missing = players.filter((p) => !p.steamId);
+        for (const p of missing) {
+          if (!p.pos) continue;
+          const idx = unmatchedRest.findIndex((rp) => typeof rp.location_x === 'number'
+            && Math.hypot(rp.location_x - p.pos.x, rp.location_y - p.pos.y) < 2000);
+          if (idx >= 0) p.steamId = unmatchedRest.splice(idx, 1)[0].userId;
+        }
+        const stillMissing = missing.filter((p) => !p.steamId);
+        if (stillMissing.length === 1 && unmatchedRest.length === 1) {
+          stillMissing[0].steamId = unmatchedRest[0].userId;
+        }
+      }
       return res.json({
         players,
         modAlive: mod.alive !== false,
