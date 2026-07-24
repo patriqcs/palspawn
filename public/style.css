@@ -440,6 +440,23 @@ td.copy:hover { color: var(--accent); }
 
 .tp-pos { color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- settings-editor ---------- */
+
+.set-edit-btn {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.set-edit-btn:hover { color: var(--accent); background: none; }
+.set-pending { color: var(--accent); font-size: 0.8rem; }
+.set-lock { cursor: help; font-size: 0.8rem; }
+.set-edit { display: inline-flex; gap: 0.3rem; align-items: center; }
+.set-edit input, .set-edit select { padding: 0.2rem 0.4rem; font-size: 0.85rem; max-width: 12rem; }
+.set-edit button { padding: 0.2rem 0.5rem; }
+
 /* ---------- inventar-anzeige (item entfernen) ---------- */
 
 .inv-box {

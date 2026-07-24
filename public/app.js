@@ -12,6 +12,7 @@ const state = {
   serverTimer: null,   // Metrik-Polling (nur solange Server-Tab aktiv)
   logsTimer: null,     // Bridge-Status/Log-Polling (nur solange Logs-Tab aktiv)
   settings: null,      // gecachte /api/server/settings
+  iniSettings: null,   // { settings: {key: rohwert}, locked: [...] } aus der ini
   lastMetricsErr: null,
   lastBridgeErr: null,
   rconHistory: [],
@@ -1051,6 +1052,13 @@ async function loadSettings() {
   if (state.settings) return;
   try {
     state.settings = await apiGet('api/server/settings');
+    if (state.features.settingsEdit) {
+      try {
+        state.iniSettings = await apiGet('api/server/settings-file');
+      } catch (err) {
+        logLine(`Settings-Datei: ${err.message}`, 'err');
+      }
+    }
     renderSettings();
   } catch (err) {
     const p = document.createElement('p');
@@ -1058,6 +1066,72 @@ async function loadSettings() {
     p.textContent = `Einstellungen nicht ladbar: ${err.message}`;
     els.settingsBox.replaceChildren(p);
   }
+}
+
+// Rohwert aus der ini ("1.000000", True, "\"Name\"") mit dem Live-Wert der
+// REST API (1, true, "Name") vergleichbar machen
+function iniDisplay(raw) {
+  if (raw == null) return null;
+  if (/^".*"$/.test(raw)) return raw.slice(1, -1);
+  return raw;
+}
+function sameValue(raw, live) {
+  const d = iniDisplay(raw);
+  if (d === null || live == null) return true;
+  if (/^(true|false)$/i.test(String(live))) return String(live).toLowerCase() === String(d).toLowerCase();
+  const nd = Number(d), nl = Number(live);
+  if (Number.isFinite(nd) && Number.isFinite(nl) && String(live).trim() !== '' && d.trim() !== '') return nd === nl;
+  return String(live) === String(d);
+}
+
+// Inline-Editor für einen Settings-Wert (Typ ergibt sich aus dem ini-Rohwert)
+function settingEditor(td, key, raw) {
+  let input;
+  if (/^(True|False)$/i.test(raw)) {
+    input = document.createElement('select');
+    for (const v of ['True', 'False']) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      input.appendChild(o);
+    }
+    input.value = /^true$/i.test(raw) ? 'True' : 'False';
+  } else {
+    input = document.createElement('input');
+    input.type = /^-?[0-9.]+$/.test(raw) ? 'number' : 'text';
+    if (input.type === 'number') input.step = 'any';
+    input.value = iniDisplay(raw);
+  }
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.textContent = '✓';
+  save.title = 'Speichern';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'secondary';
+  cancel.textContent = '✕';
+  cancel.title = 'Abbrechen';
+  cancel.addEventListener('click', () => renderSettings());
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const resp = await apiPost('api/server/settings-file', { key, value: input.value });
+      state.iniSettings.settings[key] = resp.value;
+      logLine(`${key} = ${iniDisplay(resp.value)} gespeichert — wirksam nach Server-Neustart.`, 'ok');
+    } catch (err) {
+      logLine(`${key}: ${err.message}`, 'err');
+    }
+    renderSettings();
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save.click();
+    if (e.key === 'Escape') cancel.click();
+  });
+  const wrap = document.createElement('span');
+  wrap.className = 'set-edit';
+  wrap.append(input, save, cancel);
+  td.replaceChildren(wrap);
+  input.focus();
 }
 
 function renderSettings() {
@@ -1075,13 +1149,42 @@ function renderSettings() {
     hr.appendChild(th);
   }
   thead.appendChild(hr);
+  const ini = state.iniSettings || { settings: {}, locked: [] };
+  const locked = new Set(ini.locked || []);
   const tbody = document.createElement('tbody');
   for (const [k, v] of entries) {
     const tr = document.createElement('tr');
     const tdK = document.createElement('td');
     tdK.textContent = k;
     const tdV = document.createElement('td');
-    tdV.textContent = String(v);
+    const raw = ini.settings[k];
+    const val = document.createElement('span');
+    val.textContent = String(v);
+    tdV.appendChild(val);
+    if (raw !== undefined && !sameValue(raw, v)) {
+      const pending = document.createElement('span');
+      pending.className = 'set-pending';
+      pending.textContent = ` → nach Neustart: ${iniDisplay(raw)}`;
+      pending.title = 'In der PalWorldSettings.ini geändert — wird beim nächsten Server-Neustart wirksam';
+      tdV.appendChild(pending);
+    }
+    if (state.features.settingsEdit && raw !== undefined) {
+      if (locked.has(k)) {
+        const lock = document.createElement('span');
+        lock.className = 'set-lock';
+        lock.textContent = ' 🔒';
+        lock.title = 'Wird beim Serverstart aus der Container-Konfiguration gesetzt — dort ändern';
+        tdV.appendChild(lock);
+      } else {
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'set-edit-btn';
+        edit.textContent = '✎';
+        edit.title = `${k} bearbeiten (wirksam nach Server-Neustart)`;
+        edit.addEventListener('click', () => settingEditor(tdV, k, ini.settings[k]));
+        tdV.appendChild(edit);
+      }
+    }
     tr.append(tdK, tdV);
     tbody.appendChild(tr);
   }

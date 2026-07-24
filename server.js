@@ -24,6 +24,19 @@ const APP_PASS = process.env.APP_PASS || '';
 // banlist.txt des Servers (read-only ins Image gemountet) — die REST API kann
 // bannen/entbannen, aber die Liste nicht auslesen, deshalb direkt aus der Datei.
 const BANLIST_FILE = process.env.BANLIST_FILE || '';
+// PalWorldSettings.ini (read-write gemountet): die REST API kann Settings nur
+// lesen — Änderungen schreibt palspawn direkt in die OptionSettings-Zeile.
+const SETTINGS_INI = process.env.SETTINGS_INI || '';
+// Keys, die der Server-Container bei jedem Start aus seinen ENV-Variablen
+// überschreibt — Edits daran wären wirkungslos (Komma-Liste, an das eigene
+// Compose/Template anpassen).
+const SETTINGS_LOCKED_KEYS = new Set(
+  (process.env.SETTINGS_LOCKED_KEYS || 'ServerName,ServerPlayerMaxNum,RCONEnabled,CrossplayPlatforms,PublicPort')
+    .split(',').map((s) => s.trim()).filter(Boolean),
+);
+// Immer gesperrt: würde palspawn selbst aussperren bzw. gehört nicht in die UI
+const SETTINGS_BLOCKED_KEYS = new Set(['AdminPassword', 'ServerPassword', 'RESTAPIEnabled', 'RESTAPIPort']);
+
 // Persistente Daten (Bann-Namen): banlist.txt enthält nur IDs, deshalb merkt
 // sich palspawn beim Bannen den Spielernamen selbst.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -229,6 +242,7 @@ app.get('/api/config', (req, res) => {
       bridgeAdmin: BACKEND === 'paladdon' && BRIDGE_OK,
       serverAdmin: SERVER_ADMIN,
       banlist: SERVER_ADMIN && Boolean(BANLIST_FILE),
+      settingsEdit: SERVER_ADMIN && Boolean(SETTINGS_INI),
       rcon: BACKEND !== 'paladdon' && Boolean(RCON_HOST && RCON_PASSWORD),
     },
   });
@@ -547,6 +561,103 @@ app.post('/api/server/stop', async (req, res) => {
     res.json(await palApi('/stop', { method: 'POST' }));
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PalWorldSettings.ini lesen/schreiben (OptionSettings-Zeile)
+// Werte-Formate: True/False, Zahl, "String", (Tuple) — der Typ des Bestands-
+// werts bestimmt, was ein neuer Wert haben darf. Änderungen greifen erst nach
+// einem Server-Neustart.
+// ---------------------------------------------------------------------------
+
+// Zerlegt die OptionSettings-Zeile in Key→Rohwert; Kommas in "…" bleiben erhalten
+function parseOptionSettings(text) {
+  const m = text.match(/OptionSettings=\((.*)\)\s*$/m);
+  if (!m) return null;
+  const inner = m[1];
+  const entries = [];
+  let cur = '', inQuote = false, depth = 0;
+  for (const ch of inner) {
+    if (ch === '"') inQuote = !inQuote;
+    if (!inQuote && ch === '(') depth++;
+    if (!inQuote && ch === ')') depth--;
+    if (ch === ',' && !inQuote && depth === 0) { entries.push(cur); cur = ''; } else { cur += ch; }
+  }
+  if (cur) entries.push(cur);
+  const settings = {};
+  for (const e of entries) {
+    const eq = e.indexOf('=');
+    if (eq > 0) settings[e.slice(0, eq).trim()] = e.slice(eq + 1).trim();
+  }
+  return settings;
+}
+
+app.get('/api/server/settings-file', async (req, res) => {
+  if (!SETTINGS_INI) return res.status(503).json({ error: 'SETTINGS_INI ist nicht konfiguriert' });
+  try {
+    const text = await fs.promises.readFile(SETTINGS_INI, 'utf8');
+    const settings = parseOptionSettings(text);
+    if (!settings) return res.status(502).json({ error: 'OptionSettings-Zeile nicht gefunden' });
+    for (const k of SETTINGS_BLOCKED_KEYS) delete settings[k];
+    res.json({ settings, locked: [...SETTINGS_LOCKED_KEYS] });
+  } catch (err) {
+    res.status(502).json({ error: `PalWorldSettings.ini nicht lesbar: ${err.message}` });
+  }
+});
+
+app.post('/api/server/settings-file', async (req, res) => {
+  if (!SETTINGS_INI) return res.status(503).json({ error: 'SETTINGS_INI ist nicht konfiguriert' });
+  const { key } = req.body || {};
+  const value = typeof req.body?.value === 'string' ? req.body.value.trim()
+    : (typeof req.body?.value === 'number' || typeof req.body?.value === 'boolean') ? String(req.body.value) : '';
+  if (typeof key !== 'string' || !/^[A-Za-z0-9_]+$/.test(key)) {
+    return res.status(400).json({ error: 'Ungültiger Key' });
+  }
+  if (SETTINGS_BLOCKED_KEYS.has(key)) {
+    return res.status(403).json({ error: `${key} kann aus Sicherheitsgründen nicht über die UI geändert werden` });
+  }
+  if (SETTINGS_LOCKED_KEYS.has(key)) {
+    return res.status(403).json({ error: `${key} wird beim Serverstart aus der Container-Konfiguration gesetzt — dort ändern` });
+  }
+  try {
+    const text = await fs.promises.readFile(SETTINGS_INI, 'utf8');
+    const settings = parseOptionSettings(text);
+    if (!settings) return res.status(502).json({ error: 'OptionSettings-Zeile nicht gefunden' });
+    const current = settings[key];
+    if (current === undefined) return res.status(400).json({ error: `${key} steht nicht in der ini` });
+
+    // Neuen Rohwert typgerecht zum Bestandswert bauen
+    let raw;
+    if (/^(True|False)$/i.test(current)) {
+      if (!/^(true|false)$/i.test(value)) return res.status(400).json({ error: `${key} erwartet True oder False` });
+      raw = /^true$/i.test(value) ? 'True' : 'False';
+    } else if (/^-?[0-9]+(\.[0-9]+)?$/.test(current)) {
+      if (!/^-?[0-9]+(\.[0-9]+)?$/.test(value)) return res.status(400).json({ error: `${key} erwartet eine Zahl` });
+      // Ganzzahl-Felder ganzzahlig lassen, Float-Felder im Float-Format
+      raw = current.includes('.') ? Number(value).toFixed(6) : String(Math.trunc(Number(value)));
+    } else if (/^".*"$/.test(current)) {
+      if (value.length > 200 || /["()\\]/.test(value)) {
+        return res.status(400).json({ error: `${key}: max. 200 Zeichen, keine Anführungszeichen/Klammern` });
+      }
+      raw = `"${value}"`;
+    } else {
+      return res.status(400).json({ error: `${key}: dieser Wertetyp (${current}) ist nicht über die UI editierbar` });
+    }
+
+    // OptionSettings-Zeile mit ersetztem Wert neu aufbauen, atomar schreiben
+    settings[key] = raw;
+    const restored = {};
+    for (const k of Object.keys(parseOptionSettings(text))) restored[k] = settings[k];
+    const newLine = `OptionSettings=(${Object.entries(restored).map(([k, v]) => `${k}=${v}`).join(',')})`;
+    const newText = text.replace(/OptionSettings=\(.*\)[^\S\n]*$/m, newLine);
+    await fs.promises.copyFile(SETTINGS_INI, `${SETTINGS_INI}.bak-palspawn`);
+    const tmp = `${SETTINGS_INI}.tmp-palspawn`;
+    await fs.promises.writeFile(tmp, newText);
+    await fs.promises.rename(tmp, SETTINGS_INI);
+    res.json({ ok: true, key, value: raw });
+  } catch (err) {
+    res.status(502).json({ error: `PalWorldSettings.ini nicht schreibbar: ${err.message}` });
   }
 });
 
