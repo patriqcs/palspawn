@@ -415,7 +415,9 @@ function requireBridge(res) {
   return true;
 }
 
-const UID_RE = /^[A-Za-z0-9_]+$/;
+// Auch Mod-Fallback-uids ("UScriptStruct: 0000…", mit Leerzeichen/Doppelpunkt)
+// zulassen — die Bridge matcht exakt oder per Teilstring; Zeichensatz bleibt eng.
+const UID_RE = /^[A-Za-z0-9_][A-Za-z0-9_: .-]{0,63}$/;
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 app.post('/api/pos', async (req, res) => {
