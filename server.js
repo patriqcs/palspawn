@@ -525,7 +525,7 @@ function requireServerAdmin(res) {
   return true;
 }
 
-for (const p of ['info', 'metrics', 'settings', 'gamedata']) {
+for (const p of ['info', 'metrics', 'settings']) {
   app.get(`/api/server/${p}`, async (req, res) => {
     if (!requireServerAdmin(res)) return;
     try {
@@ -535,6 +535,82 @@ for (const p of ['info', 'metrics', 'settings', 'gamedata']) {
     }
   });
 }
+
+// Gamedata (Welt-Snapshot für die Karte): der offizielle Endpunkt existiert
+// nicht auf jeder Server-Version (v1.0.1.100619 → 404). Fallback: dieselbe
+// Datenform aus Bridge-Spielerliste + listBases-Op synthetisieren.
+let gamedataUnsupportedAt = 0; // 404 gemerkt → 1 h lang direkt Fallback
+let basesCache = { at: 0, bases: [] }; // listBases ist ein IPC-Roundtrip → cachen
+
+async function bridgeBases() {
+  if (Date.now() - basesCache.at < 600000) return basesCache.bases;
+  try {
+    const resp = await bridgeFetch('/api/command', {
+      method: 'POST',
+      body: JSON.stringify({ steps: [{ op: 'listBases' }] }),
+    }, 30000);
+    const r = (resp.results || [])[0];
+    if (r && r.ok !== false && r.data && Array.isArray(r.data.bases)) {
+      basesCache = { at: Date.now(), bases: r.data.bases };
+    }
+  } catch { /* Basen sind optional (Mod evtl. noch < 0.9.33) */ }
+  return basesCache.bases;
+}
+
+app.get('/api/server/gamedata', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  if (Date.now() - gamedataUnsupportedAt > 3600000) {
+    try {
+      return res.json(await palApi('/gamedata'));
+    } catch (err) {
+      if (!/HTTP 404/.test(err.message)) {
+        return res.status(502).json({ error: err.message });
+      }
+      gamedataUnsupportedAt = Date.now();
+    }
+  }
+  // Fallback: Spieler aus der Bridge (inkl. Z), Basen aus dem Cache
+  try {
+    const actors = [];
+    if (BRIDGE_OK) {
+      const status = await bridgeFetch('/api/status');
+      const players = status.mod?.status?.players || [];
+      for (const p of players) {
+        if (!p.pos || typeof p.pos.x !== 'number') continue;
+        actors.push({
+          Type: 'Character',
+          UnitType: 'Player',
+          NickName: p.name || `Spieler ${p.uid}`,
+          level: p.level ?? null,
+          LocationX: p.pos.x,
+          LocationY: p.pos.y,
+          LocationZ: p.pos.z,
+          IsActive: true,
+        });
+      }
+      for (const b of await bridgeBases()) {
+        actors.push({ Type: 'PalBox', GuildName: '', LocationX: b.x, LocationY: b.y });
+      }
+    } else {
+      const data = await palApi('/players');
+      for (const p of data.players || []) {
+        if (typeof p.location_x !== 'number') continue;
+        actors.push({
+          Type: 'Character',
+          UnitType: 'Player',
+          NickName: p.name || p.userId,
+          level: p.level ?? null,
+          LocationX: p.location_x,
+          LocationY: p.location_y,
+          IsActive: true,
+        });
+      }
+    }
+    res.json({ Time: null, FPS: null, ActorData: actors, fallback: true });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
 
 app.post('/api/server/announce', async (req, res) => {
   if (!requireServerAdmin(res)) return;
