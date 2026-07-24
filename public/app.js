@@ -39,6 +39,8 @@ const els = {
   // Spieler-Tab
   playersBox: $('#players-box'),
   unbanRow: $('#unban-row'),
+  unbanSelect: $('#unban-select'),
+  unbanRefresh: $('#unban-refresh'),
   unbanId: $('#unban-id'),
   unbanBtn: $('#unban-btn'),
   teleport: $('#teleport'),
@@ -216,6 +218,8 @@ function applyFeatures() {
   els.teleport.hidden = !f.teleport;
   els.charActions.hidden = !f.palOps;
   els.unbanRow.hidden = !f.serverAdmin;
+  els.unbanSelect.hidden = !f.banlist;
+  els.unbanRefresh.hidden = !f.banlist;
   els.bridgeAdmin.hidden = !f.bridgeAdmin;
   els.rconBox.hidden = !f.rcon;
 }
@@ -235,6 +239,7 @@ function setTab(tab) {
   stopLogsPolling();
   if (tab === 'server') startServerPolling();
   if (tab === 'logs' && state.features.bridgeAdmin) startLogsPolling();
+  if (tab === 'players') loadBanlist();
 }
 
 async function loadConfig() {
@@ -597,19 +602,46 @@ async function kickBan(action, p, pid) {
     });
     logLine(`${p.name} ${action === 'kick' ? 'gekickt' : 'gebannt'}.`, 'ok');
     loadPlayers();
+    if (action === 'ban') loadBanlist();
   } catch (err) {
     logLine(`${action === 'kick' ? 'Kick' : 'Bann'}: ${err.message}`, 'err');
   }
 }
 
+// Bann-Liste aus banlist.txt des Servers (nur wenn features.banlist)
+async function loadBanlist() {
+  if (!state.features.banlist) return;
+  try {
+    const d = await apiGet('api/server/banlist');
+    const banned = Array.isArray(d.banned) ? d.banned : [];
+    const prev = els.unbanSelect.value;
+    els.unbanSelect.replaceChildren();
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = banned.length ? `– gebannte Spieler (${banned.length}) –` : '– keine Banns –';
+    els.unbanSelect.appendChild(ph);
+    for (const b of banned) {
+      const opt = document.createElement('option');
+      opt.value = b.userId;
+      opt.textContent = b.userId;
+      els.unbanSelect.appendChild(opt);
+    }
+    if ([...els.unbanSelect.options].some((o) => o.value === prev)) els.unbanSelect.value = prev;
+  } catch (err) {
+    logLine(`Bann-Liste: ${err.message}`, 'err');
+  }
+}
+
 async function unban() {
   const userId = els.unbanId.value.trim();
-  if (!userId) return logLine('Entbannen: userId eingeben.', 'err');
+  if (!userId) return logLine('Entbannen: userId eingeben oder aus der Liste wählen.', 'err');
   els.unbanBtn.disabled = true;
   try {
     await apiPost('api/server/unban', { userId });
     logLine(`${userId} entbannt.`, 'ok');
     els.unbanId.value = '';
+    els.unbanSelect.value = '';
+    loadBanlist();
   } catch (err) {
     logLine(`Entbannen: ${err.message}`, 'err');
   }
@@ -1322,6 +1354,10 @@ els.tpDel.addEventListener('click', tpDeleteSpot);
 els.tpSpots.addEventListener('change', tpSelectSpot);
 
 // Spieler-Tab
+els.unbanSelect.addEventListener('change', () => {
+  if (els.unbanSelect.value) els.unbanId.value = els.unbanSelect.value;
+});
+els.unbanRefresh.addEventListener('click', loadBanlist);
 els.unbanBtn.addEventListener('click', unban);
 els.hpRange.addEventListener('input', () => { els.hpNum.value = els.hpRange.value; });
 els.hpNum.addEventListener('change', () => {

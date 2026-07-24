@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=7">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -62,6 +62,8 @@
           </div>
           <div id="unban-row" class="form-row" hidden>
             <label for="unban-id">Entbannen:</label>
+            <select id="unban-select" hidden aria-label="Gebannte Spieler"><option value="">– gebannte Spieler –</option></select>
+            <button id="unban-refresh" class="secondary" hidden title="Bann-Liste aktualisieren">&#x21bb;</button>
             <input id="unban-id" type="text" placeholder="userId (z. B. steam_7656…)">
             <button id="unban-btn" class="secondary">Entbannen</button>
           </div>
@@ -270,6 +272,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

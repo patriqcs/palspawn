@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
@@ -20,6 +21,9 @@ const GIVE_COMMAND_TEMPLATE = process.env.GIVE_COMMAND_TEMPLATE || 'give {userId
 const BACKEND = process.env.BACKEND || (BRIDGE_URL ? 'paladdon' : 'paldefender');
 const APP_USER = process.env.APP_USER || '';
 const APP_PASS = process.env.APP_PASS || '';
+// banlist.txt des Servers (read-only ins Image gemountet) — die REST API kann
+// bannen/entbannen, aber die Liste nicht auslesen, deshalb direkt aus der Datei.
+const BANLIST_FILE = process.env.BANLIST_FILE || '';
 
 const app = express();
 app.use(express.json());
@@ -205,6 +209,7 @@ app.get('/api/config', (req, res) => {
       palOps: BACKEND === 'paladdon' && BRIDGE_OK,
       bridgeAdmin: BACKEND === 'paladdon' && BRIDGE_OK,
       serverAdmin: SERVER_ADMIN,
+      banlist: SERVER_ADMIN && Boolean(BANLIST_FILE),
       rcon: BACKEND !== 'paladdon' && Boolean(RCON_HOST && RCON_PASSWORD),
     },
   });
@@ -523,6 +528,32 @@ app.post('/api/server/stop', async (req, res) => {
     res.json(await palApi('/stop', { method: 'POST' }));
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+// Gebannte Spieler: Format der banlist.txt ist "userid,playerId-hex" pro Zeile
+app.get('/api/server/banlist', async (req, res) => {
+  if (!BANLIST_FILE) {
+    return res.status(503).json({ error: 'BANLIST_FILE ist nicht konfiguriert' });
+  }
+  try {
+    let text = '';
+    try {
+      text = await fs.promises.readFile(BANLIST_FILE, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // Datei existiert erst nach dem ersten Bann
+    }
+    const banned = text.split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [userId, playerId] = line.split(',');
+        return { userId: userId.trim(), playerId: (playerId || '').trim() || null };
+      })
+      .filter((b) => b.userId);
+    res.json({ banned });
+  } catch (err) {
+    res.status(502).json({ error: `banlist.txt nicht lesbar: ${err.message}` });
   }
 });
 
