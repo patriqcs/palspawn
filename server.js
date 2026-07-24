@@ -650,7 +650,9 @@ app.post('/api/server/settings-file', async (req, res) => {
     const restored = {};
     for (const k of Object.keys(parseOptionSettings(text))) restored[k] = settings[k];
     const newLine = `OptionSettings=(${Object.entries(restored).map(([k, v]) => `${k}=${v}`).join(',')})`;
-    const newText = text.replace(/OptionSettings=\(.*\)[^\S\n]*$/m, newLine);
+    // Callback statt String-Replacement: verhindert $-Expansion ($&, $' …) aus
+    // Nutzerwerten und erhält ein evtl. CRLF-Zeilenende der Originalzeile.
+    const newText = text.replace(/OptionSettings=\(.*\)(\r?)[^\S\n]*$/m, (m, cr) => newLine + cr);
     await fs.promises.copyFile(SETTINGS_INI, `${SETTINGS_INI}.bak-palspawn`);
     const tmp = `${SETTINGS_INI}.tmp-palspawn`;
     await fs.promises.writeFile(tmp, newText);
