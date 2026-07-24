@@ -1,0 +1,38 @@
+# PalSpawn auf dem Unraid-Host — versionierte Referenz der Container-Definition.
+# Secrets kommen aus einer .env daneben (siehe .env.example). Auf Unraid wird
+# der Container normalerweise über das Template my-palspawn.xml verwaltet;
+# diese Datei dokumentiert dieselbe Konfiguration für compose-basierte Setups.
+#
+# Wichtig: Das Netzwerk des Palworld-Containers (palchaos-server_default) wird
+# benutzt, damit die containerinterne REST API (Port 8212, bewusst nicht
+# published) erreichbar ist.
+services:
+  palspawn:
+    image: ghcr.io/patriqcs/palspawn:latest
+    container_name: palspawn
+    restart: unless-stopped
+    ports:
+      - "8383:8080"
+    environment:
+      - TZ=Europe/Berlin
+      # In-Game-Ops über die Paladdon-Bridge:
+      - BRIDGE_URL=${BRIDGE_URL}
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
+      # Server-Administration über die offizielle REST API (containerintern):
+      - PALWORLD_API_URL=http://palchaos-server:8212
+      - PALWORLD_API_PASS=${PALWORLD_API_PASS}
+      # Bann-Liste + gemerkte Bann-Namen + Settings-Editor:
+      - BANLIST_FILE=/palsaves/banlist.txt
+      - DATA_DIR=/data
+      - SETTINGS_INI=/palconfig/PalWorldSettings.ini
+    volumes:
+      - /mnt/cache/appdata/palchaos-server/game/Pal/Saved/SaveGames:/palsaves:ro
+      - /mnt/cache/appdata/palspawn/data:/data
+      - /mnt/cache/appdata/palchaos-server/game/Pal/Saved/Config/WindowsServer:/palconfig
+    networks:
+      - palchaos
+
+networks:
+  palchaos:
+    external: true
+    name: palchaos-server_default

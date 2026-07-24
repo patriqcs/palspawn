@@ -72,7 +72,8 @@ Spielerliste über die offizielle REST API (`/v1/api/players`), Item-Spawn per R
 Image wird von GitHub Actions automatisch nach GHCR gebaut:
 `ghcr.io/patriqcs/palspawn:latest`
 
-In Unraid: **Docker → Add Container**
+In Unraid: **Docker → Add Container** — oder per Compose: [`deploy/docker-compose.yml`](deploy/docker-compose.yml)
+(Secrets in `deploy/.env`, Vorlage: `deploy/.env.example`)
 
 | Feld | Wert |
 |---|---|

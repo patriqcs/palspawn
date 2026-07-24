@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -221,7 +221,7 @@
 
         <div class="card">
           <h3>Einstellungen</h3>
-          <p class="muted small">Werte mit ✎ sind direkt editierbar (PalWorldSettings.ini) — Änderungen werden erst nach einem Server-Neustart wirksam. 🔒 = wird von der Container-Konfiguration verwaltet.</p>
+          <p id="settings-hint" class="muted small" hidden>Werte mit ✎ sind direkt editierbar (PalWorldSettings.ini) — Änderungen werden erst nach einem Server-Neustart wirksam. 🔒 = wird von der Container-Konfiguration verwaltet.</p>
           <div class="form-row">
             <input id="set-search" type="search" placeholder="Einstellung suchen…" autocomplete="off">
           </div>
@@ -277,6 +277,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

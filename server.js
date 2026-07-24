@@ -665,6 +665,7 @@ app.post('/api/server/settings-file', async (req, res) => {
 
 // Gebannte Spieler: Format der banlist.txt ist "userid,playerId-hex" pro Zeile
 app.get('/api/server/banlist', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
   if (!BANLIST_FILE) {
     return res.status(503).json({ error: 'BANLIST_FILE ist nicht konfiguriert' });
   }

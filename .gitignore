@@ -1,3 +1,4 @@
 node_modules/
 skill-observations/
 .env
+deploy/.env

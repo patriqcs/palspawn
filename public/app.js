@@ -107,6 +107,7 @@ const els = {
   sdBtn: $('#sd-btn'),
   stopBtn: $('#stop-btn'),
   setSearch: $('#set-search'),
+  settingsHint: $('#settings-hint'),
   settingsBox: $('#settings-box'),
   // Logs-Tab
   bridgeAdmin: $('#bridge-admin'),
@@ -192,9 +193,15 @@ function requirePlayer() {
   return userId;
 }
 
+// Anzeigename mit Fallback: der Mod meldet bei leerem Server mitunter einen
+// Eintrag ohne Namen — dann statt Leerstring die userId zeigen
+function playerLabel(p) {
+  return p.name || `Spieler ${p.userId}`;
+}
+
 function selectedPlayerName() {
   const p = state.players.find((x) => x.userId === els.playerSelect.value);
-  return p ? p.name : els.playerSelect.value;
+  return p ? playerLabel(p) : els.playerSelect.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +229,7 @@ function applyFeatures() {
   els.unbanRow.hidden = !f.serverAdmin;
   els.unbanSelect.hidden = !f.banlist;
   els.unbanRefresh.hidden = !f.banlist;
+  els.settingsHint.hidden = !f.settingsEdit;
   els.bridgeAdmin.hidden = !f.bridgeAdmin;
   els.rconBox.hidden = !f.rcon;
 }
@@ -443,7 +451,7 @@ function fillPlayerSelect(sel) {
   for (const p of state.players) {
     const opt = document.createElement('option');
     opt.value = p.userId;
-    opt.textContent = p.level != null ? `${p.name} (Level ${p.level})` : p.name;
+    opt.textContent = p.level != null ? `${playerLabel(p)} (Level ${p.level})` : playerLabel(p);
     sel.appendChild(opt);
   }
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
@@ -541,7 +549,7 @@ function renderPlayersTable() {
       tr.appendChild(cell);
       return cell;
     };
-    td(p.name || '–');
+    td(playerLabel(p));
     td(p.level != null ? String(p.level) : '–');
     td(posText(p));
     const uidCell = td(p.userId || '–');
@@ -571,7 +579,7 @@ function renderPlayersTable() {
       els.playerSelect.value = p.userId;
       updateSpawnButton();
       renderTpPlayers();
-      logLine(`Spieler ${p.name} ausgewählt.`, 'info');
+      logLine(`Spieler ${playerLabel(p)} ausgewählt.`, 'info');
     });
     actions.appendChild(sel);
     if (state.features.serverAdmin) {
@@ -600,9 +608,9 @@ function renderPlayersTable() {
 
 async function kickBan(action, p, pid) {
   const verb = action === 'kick' ? 'kicken' : 'bannen';
-  const message = window.prompt(`Grund (optional) – ${p.name} ${verb}:`, '');
+  const message = window.prompt(`Grund (optional) – ${playerLabel(p)} ${verb}:`, '');
   if (message === null) return; // abgebrochen
-  if (!window.confirm(`${p.name} wirklich ${verb}?`)) return;
+  if (!window.confirm(`${playerLabel(p)} wirklich ${verb}?`)) return;
   try {
     await apiPost(`api/server/${action}`, {
       userId: pid,
@@ -610,7 +618,7 @@ async function kickBan(action, p, pid) {
       // Beim Bannen den Namen mitgeben — der Server merkt ihn sich für die Bann-Liste
       ...(action === 'ban' && p.name ? { name: p.name } : {}),
     });
-    logLine(`${p.name} ${action === 'kick' ? 'gekickt' : 'gebannt'}.`, 'ok');
+    logLine(`${playerLabel(p)} ${action === 'kick' ? 'gekickt' : 'gebannt'}.`, 'ok');
     loadPlayers();
     if (action === 'ban') loadBanlist();
   } catch (err) {
@@ -738,7 +746,7 @@ function renderTpPlayers() {
     if (p.userId === current) continue;
     const opt = document.createElement('option');
     opt.value = p.userId;
-    opt.textContent = p.name;
+    opt.textContent = playerLabel(p);
     els.tpPlayer.appendChild(opt);
   }
   if ([...els.tpPlayer.options].some((o) => o.value === prev)) els.tpPlayer.value = prev;
@@ -1161,7 +1169,9 @@ function renderSettings() {
     const val = document.createElement('span');
     val.textContent = String(v);
     tdV.appendChild(val);
-    if (raw !== undefined && !sameValue(raw, v)) {
+    // Bei 🔒-Keys keinen „nach Neustart"-Hinweis: dort gewinnt beim Start die
+    // Container-Konfiguration, nicht der ini-Wert
+    if (raw !== undefined && !locked.has(k) && !sameValue(raw, v)) {
       const pending = document.createElement('span');
       pending.className = 'set-pending';
       pending.textContent = ` → nach Neustart: ${iniDisplay(raw)}`;
