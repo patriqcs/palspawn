@@ -283,11 +283,11 @@ app.get('/api/players', async (req, res) => {
         ) || null;
         // Beste uid wählen: Versagt die Guid-Reflection im Mod, ist p.uid ein
         // "UScriptStruct: <adresse>"-Dump — die Adresse ändert sich pro
-        // Enumeration und taugt nicht als Target. Stabile Kandidaten
-        // (PlayerId "256", PlayerUId-Guid) bevorzugen; der Mod matcht
-        // Targets ohnehin gegen alle ids.
+        // Enumeration und taugt nicht als Target. Die PlayerUId-Guid zuerst:
+        // sie ist kollisionsfrei, während kurze PlayerIds ("256") beim
+        // Teilstring-Match des Mods andere Spieler treffen könnten.
         const clean = (v) => typeof v === 'string' && v && !/^UScriptStruct/i.test(v) && !v.includes(' ');
-        const userId = [p.uid, ids.PlayerId, ids.PlayerUId, ...Object.values(ids)].find(clean) || p.uid;
+        const userId = [ids.PlayerUId, p.uid, ids.PlayerId, ...Object.values(ids)].find(clean) || p.uid;
         return {
           name: p.name,
           userId,
@@ -338,7 +338,13 @@ app.post('/api/give', async (req, res) => {
   if (BACKEND !== 'paladdon' && (!RCON_HOST || !RCON_PASSWORD)) {
     return res.status(503).json({ error: 'RCON_HOST/RCON_PASSWORD ist nicht konfiguriert' });
   }
-  if (typeof userId !== 'string' || !/^[A-Za-z0-9_]+$/.test(userId)) {
+  // Paladdon: gleiche gelockerte uid-Regel wie überall (Mod-Fallback-Formate);
+  // PalDefender: strikt lassen — die userId wird dort in den RCON-Befehlsstring
+  // interpoliert, der enge Zeichensatz ist der Injection-Schutz.
+  const uidOk = BACKEND === 'paladdon'
+    ? (typeof userId === 'string' && UID_RE.test(userId))
+    : (typeof userId === 'string' && /^[A-Za-z0-9_]+$/.test(userId));
+  if (!uidOk) {
     return res.status(400).json({ error: 'Ungültige userId' });
   }
   if (!Array.isArray(items) || items.length === 0 || items.length > 200) {
@@ -549,10 +555,10 @@ for (const p of ['info', 'metrics', 'settings']) {
 // nicht auf jeder Server-Version (v1.0.1.100619 → 404). Fallback: dieselbe
 // Datenform aus Bridge-Spielerliste + listBases-Op synthetisieren.
 let gamedataUnsupportedAt = 0; // 404 gemerkt → 1 h lang direkt Fallback
-let basesCache = { at: 0, bases: [] }; // listBases ist ein IPC-Roundtrip → cachen
+let basesCache = { at: 0, ttl: 0, bases: [] }; // listBases ist ein IPC-Roundtrip → cachen
 
 async function bridgeBases() {
-  if (Date.now() - basesCache.at < 600000) return basesCache.bases;
+  if (Date.now() - basesCache.at < basesCache.ttl) return basesCache.bases;
   try {
     const resp = await bridgeFetch('/api/command', {
       method: 'POST',
@@ -560,9 +566,15 @@ async function bridgeBases() {
     }, 30000);
     const r = (resp.results || [])[0];
     if (r && r.ok !== false && r.data && Array.isArray(r.data.bases)) {
-      basesCache = { at: Date.now(), bases: r.data.bases };
+      basesCache = { at: Date.now(), ttl: 600000, bases: r.data.bases };
+    } else {
+      // Negative-Caching: Mod kennt die Op (noch) nicht — nicht bei jedem
+      // 10-s-Karten-Poll einen weiteren IPC-Roundtrip in die Queue stellen.
+      basesCache = { at: Date.now(), ttl: 60000, bases: basesCache.bases };
     }
-  } catch { /* Basen sind optional (Mod evtl. noch < 0.9.33) */ }
+  } catch {
+    basesCache = { at: Date.now(), ttl: 60000, bases: basesCache.bases };
+  }
   return basesCache.bases;
 }
 
@@ -572,24 +584,29 @@ app.get('/api/server/gamedata', async (req, res) => {
     try {
       return res.json(await palApi('/gamedata'));
     } catch (err) {
-      if (!/HTTP 404/.test(err.message)) {
-        return res.status(502).json({ error: err.message });
-      }
-      gamedataUnsupportedAt = Date.now();
+      // 404 = Endpunkt existiert nicht (1 h merken); jeder ANDERE Fehler
+      // (Timeout, 500, Reboot) fällt ebenfalls in den Fallback durch —
+      // die Karte soll leben, solange irgendein Backend Daten hat.
+      if (/HTTP 404/.test(err.message)) gamedataUnsupportedAt = Date.now();
     }
   }
-  // Fallback: Spieler aus der Bridge (inkl. Z), Basen aus dem Cache
-  try {
-    const actors = [];
-    if (BRIDGE_OK) {
+  // Fallback-Kaskade: Bridge (Spieler inkl. Z + Basen) → REST /players
+  const actors = [];
+  let bridgeErr = null;
+  if (BRIDGE_OK) {
+    try {
       const status = await bridgeFetch('/api/status');
       const players = status.mod?.status?.players || [];
+      const clean = (v) => typeof v === 'string' && v && !/^UScriptStruct/i.test(v) && !v.includes(' ');
       for (const p of players) {
         if (!p.pos || typeof p.pos.x !== 'number') continue;
+        const ids = p.ids || {};
+        const userId = [ids.PlayerUId, p.uid, ids.PlayerId, ...Object.values(ids)].find(clean) || p.uid;
         actors.push({
           Type: 'Character',
           UnitType: 'Player',
-          NickName: p.name || `Spieler ${p.uid}`,
+          NickName: p.name || `Spieler ${userId}`,
+          userId,
           level: p.level ?? null,
           LocationX: p.pos.x,
           LocationY: p.pos.y,
@@ -600,24 +617,29 @@ app.get('/api/server/gamedata', async (req, res) => {
       for (const b of await bridgeBases()) {
         actors.push({ Type: 'PalBox', GuildName: '', LocationX: b.x, LocationY: b.y, LocationZ: b.z });
       }
-    } else {
-      const data = await palApi('/players');
-      for (const p of data.players || []) {
-        if (typeof p.location_x !== 'number') continue;
-        actors.push({
-          Type: 'Character',
-          UnitType: 'Player',
-          NickName: p.name || p.userId,
-          level: p.level ?? null,
-          LocationX: p.location_x,
-          LocationY: p.location_y,
-          IsActive: true,
-        });
-      }
+      return res.json({ Time: null, FPS: null, ActorData: actors, fallback: true });
+    } catch (err) {
+      bridgeErr = err; // Bridge down → REST-Zweig versuchen
+    }
+  }
+  try {
+    const data = await palApi('/players');
+    for (const p of data.players || []) {
+      if (typeof p.location_x !== 'number') continue;
+      actors.push({
+        Type: 'Character',
+        UnitType: 'Player',
+        NickName: p.name || p.userId,
+        userId: p.userId,
+        level: p.level ?? null,
+        LocationX: p.location_x,
+        LocationY: p.location_y,
+        IsActive: true,
+      });
     }
     res.json({ Time: null, FPS: null, ActorData: actors, fallback: true });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: (bridgeErr || err).message });
   }
 });
 
@@ -854,7 +876,12 @@ function cancelRestartPlan() {
 
 app.get('/api/server/restart', (req, res) => {
   res.json(restartPlan
-    ? { scheduled: true, at: restartPlan.at, minutes: restartPlan.minutes }
+    ? {
+      scheduled: true,
+      at: restartPlan.at,
+      minutes: restartPlan.minutes,
+      executing: restartPlan.executing === true,
+    }
     : { scheduled: false });
 });
 
@@ -863,21 +890,28 @@ app.post('/api/server/restart', async (req, res) => {
   const minutes = clampInt(req.body?.minutes, 1, 120, null);
   if (minutes === null) return res.status(400).json({ error: 'minutes muss 1-120 sein' });
   if (restartPlan) return res.status(409).json({ error: 'Es ist bereits ein Neustart geplant' });
+  // Sentinel SOFORT setzen (vor jedem await) — sonst passieren zwei parallele
+  // Requests beide den 409-Check und hinterlassen eine unstornierbare Timer-Kette.
+  restartPlan = { at: Date.now() + minutes * 60000, minutes, timers: [], executing: false };
+  const plan = restartPlan;
   const say = (message) => palApi('/announce', {
     method: 'POST',
     body: JSON.stringify({ message }),
   }).catch((err) => console.warn(`Neustart-Ansage fehlgeschlagen: ${err.message}`));
-  try {
-    await say(`Server-Neustart in ${minutes} Minute(n)!`);
-  } catch { /* say fängt selbst */ }
-  const timers = [];
+  await say(`Server-Neustart in ${minutes} Minute(n)!`);
+  if (restartPlan !== plan) {
+    // Während der Ansage bereits abgebrochen
+    return res.json({ ok: true, scheduled: false });
+  }
   for (const m of [30, 15, 10, 5, 3, 1]) {
     if (m < minutes) {
-      timers.push(setTimeout(() => say(`Server-Neustart in ${m} Minute(n)!`), (minutes - m) * 60000));
+      plan.timers.push(setTimeout(() => say(`Server-Neustart in ${m} Minute(n)!`), (minutes - m) * 60000));
     }
   }
-  timers.push(setTimeout(async () => {
-    restartPlan = null;
+  plan.timers.push(setTimeout(async () => {
+    // Plan bleibt bis zum Abschluss referenziert: ein "Abbrechen" in diesem
+    // Fenster bekommt eine ehrliche Antwort statt eines wirkungslosen Erfolgs.
+    plan.executing = true;
     try {
       await palApi('/shutdown', {
         method: 'POST',
@@ -885,16 +919,21 @@ app.post('/api/server/restart', async (req, res) => {
       });
       audit('restartExecuted', { minutes });
     } catch (err) {
+      audit('restartFailed', { minutes, error: err.message });
       console.warn(`Geplanter Neustart fehlgeschlagen: ${err.message}`);
+    } finally {
+      if (restartPlan === plan) restartPlan = null;
     }
   }, Math.max(10000, minutes * 60000 - 10000)));
-  restartPlan = { at: Date.now() + minutes * 60000, minutes, timers };
   audit('restartScheduled', { minutes });
-  res.json({ ok: true, at: restartPlan.at, minutes });
+  res.json({ ok: true, at: plan.at, minutes });
 });
 
 app.delete('/api/server/restart', async (req, res) => {
   if (!requireServerAdmin(res)) return;
+  if (restartPlan && restartPlan.executing) {
+    return res.status(409).json({ error: 'Zu spät — der Neustart wird bereits ausgeführt' });
+  }
   if (!cancelRestartPlan()) return res.json({ ok: true, scheduled: false });
   audit('restartCancelled');
   try {
@@ -912,11 +951,15 @@ app.delete('/api/server/restart', async (req, res) => {
 
 app.get('/api/audit', async (req, res) => {
   try {
+    // Rotierte Datei mitlesen — sonst kollabiert die Historie direkt nach
+    // der 1-MB-Rotation auf die ersten Zeilen der frischen Datei.
     let text = '';
-    try {
-      text = await fs.promises.readFile(AUDIT_FILE, 'utf8');
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
+    for (const f of [`${AUDIT_FILE}.1`, AUDIT_FILE]) {
+      try {
+        text += await fs.promises.readFile(f, 'utf8');
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
     }
     const lines = text.split('\n').filter(Boolean);
     const entries = lines.slice(-200).map((l) => {

@@ -323,9 +323,11 @@ function tabAvailable(tab) {
   const f = state.features;
   if (tab === 'items' || tab === 'players') return true;
   if (tab === 'pals') return f.palOps;
-  if (tab === 'server') return f.serverAdmin;
+  // Server-Tab auch in Bridge-only-Setups: die Weltzeit-Card braucht nur palOps
+  if (tab === 'server') return f.serverAdmin || f.palOps;
   if (tab === 'map') return f.serverAdmin;
-  if (tab === 'logs') return f.bridgeAdmin || f.rcon;
+  // Aktions-Historie ist sinnvoll, sobald irgendein Backend Aktionen erzeugt
+  if (tab === 'logs') return f.bridgeAdmin || f.rcon || f.serverAdmin;
   return false;
 }
 
@@ -338,6 +340,11 @@ function applyFeatures() {
   els.charActions.hidden = !f.palOps;
   // Weltzeit-Card lebt im Server-Tab, braucht aber die Bridge (palOps)
   els.worldtimeCard.hidden = !f.palOps;
+  // Alle reinen REST-Admin-Bereiche des Server-Panels (Info, Metriken,
+  // Aktionen, Neustart & Stopp, Einstellungen) nur mit serverAdmin zeigen
+  for (const el of document.querySelectorAll('#panel-server .needs-serveradmin')) {
+    el.hidden = !f.serverAdmin;
+  }
   els.unbanCard.hidden = !f.serverAdmin;
   els.unbanSelect.hidden = !f.banlist;
   els.unbanRefresh.hidden = !f.banlist;
@@ -346,11 +353,13 @@ function applyFeatures() {
   els.rconBox.hidden = !f.rcon;
 }
 
-function setTab(tab) {
+// persist nur bei bewusster Nutzer-Wahl (Tab-Klick) — Init/Fallback-Aufrufe
+// dürfen die gespeicherte Präferenz nicht überschreiben
+function setTab(tab, { persist = false } = {}) {
   if (!tabAvailable(tab)) tab = 'items';
   state.activeTab = tab;
   document.body.dataset.tab = tab;
-  localStorage.setItem(TAB_KEY, tab);
+  if (persist) localStorage.setItem(TAB_KEY, tab);
   for (const btn of els.tabs.querySelectorAll('.tab')) {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   }
@@ -550,9 +559,26 @@ function renderCart() {
 }
 
 function updateSpawnButton() {
+  if (els.spawn.dataset.busy) return; // laufender Request — nicht reaktivieren
   const hasPlayer = !!els.playerSelect.value;
   els.spawn.disabled = !state.cart.size || !hasPlayer;
   els.spawn.title = hasPlayer ? '' : 'Zuerst oben einen Spieler auswählen';
+}
+
+// Busy-Zustand für Request-Buttons: solange dataset.busy gesetzt ist, lässt
+// updatePlayerContext() (läuft u. a. beim 60-s-Spieler-Polling) den Button in
+// Ruhe — sonst würde er mitten im Request reaktiviert (Doppel-Submits, z. B.
+// spawnPal läuft bis 90 s). setBusy(btn, false) stellt den korrekten
+// disabled-Zustand über updatePlayerContext() wieder her.
+function setBusy(btn, busy) {
+  if (busy) {
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+  } else {
+    delete btn.dataset.busy;
+    btn.disabled = false;
+    updatePlayerContext();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +613,7 @@ function updatePlayerContext() {
     els.spBtn, els.scBtn, els.csBtn, els.wwBtn, els.dwBtn,
   ];
   for (const b of btns) {
+    if (b.dataset.busy) continue; // laufender Request — nicht reaktivieren
     b.disabled = !userId;
     b.title = userId ? '' : 'Zuerst oben einen Spieler auswählen';
   }
@@ -826,7 +853,7 @@ async function loadBanlist() {
 async function unban() {
   const userId = els.unbanId.value.trim();
   if (!userId) return logLine('Entbannen: userId eingeben oder aus der Liste wählen.', 'err');
-  els.unbanBtn.disabled = true;
+  setBusy(els.unbanBtn, true);
   try {
     await apiPost('api/server/unban', { userId });
     logLine(`${userId} entbannt.`, 'ok');
@@ -836,7 +863,7 @@ async function unban() {
   } catch (err) {
     logLine(`Entbannen: ${err.message}`, 'err');
   }
-  els.unbanBtn.disabled = false;
+  setBusy(els.unbanBtn, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -849,7 +876,7 @@ async function spawn() {
   const player = state.players.find((p) => p.userId === userId);
   const items = [...state.cart].map(([id, amount]) => ({ id, amount }));
 
-  els.spawn.disabled = true;
+  setBusy(els.spawn, true);
   els.spawn.textContent = 'Spawne…';
   logLine(`Sende ${items.length} Item(s) an ${player ? player.name : userId}…`);
   try {
@@ -876,7 +903,7 @@ async function spawn() {
     logLine(`Fehler: ${err.message}`, 'err');
   }
   els.spawn.textContent = 'Spawnen';
-  updateSpawnButton();
+  setBusy(els.spawn, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -939,9 +966,9 @@ async function tpApi(path, body, okMsg) {
 async function tpGetPos() {
   const userId = requirePlayer();
   if (!userId) return;
-  els.tpGetpos.disabled = true;
+  setBusy(els.tpGetpos, true);
   const data = await tpApi('api/pos', { userId });
-  els.tpGetpos.disabled = false;
+  setBusy(els.tpGetpos, false);
   if (!data) return;
   const { x, y, z } = data.pos;
   els.tpX.value = Math.round(x);
@@ -957,10 +984,10 @@ async function tpGo() {
   if ([x, y, z].some((v) => !Number.isFinite(v))) {
     return logLine('Teleport: X, Y und Z ausfüllen (z. B. über „Position holen").', 'err');
   }
-  els.tpGo.disabled = true;
+  setBusy(els.tpGo, true);
   await tpApi('api/teleport', { userId, mode: 'to', x, y, z },
     `Teleportiert nach ${Math.round(x)} / ${Math.round(y)} / ${Math.round(z)}.`);
-  els.tpGo.disabled = false;
+  setBusy(els.tpGo, false);
 }
 
 async function tpToPlayer() {
@@ -969,10 +996,10 @@ async function tpToPlayer() {
   const targetUid = els.tpPlayer.value;
   if (!targetUid) return logLine('Teleport: Zielspieler auswählen.', 'err');
   const target = state.players.find((p) => p.userId === targetUid);
-  els.tpToplayer.disabled = true;
+  setBusy(els.tpToplayer, true);
   await tpApi('api/teleport', { userId, mode: 'toPlayer', targetUid },
     `Teleportiert zu ${target ? target.name : targetUid}.`);
-  els.tpToplayer.disabled = false;
+  setBusy(els.tpToplayer, false);
 }
 
 function tpSaveSpot() {
@@ -1036,11 +1063,11 @@ async function tpToBase() {
   if (!userId) return;
   const b = state.bases[parseInt(els.tpBases.value, 10)];
   if (!b) return logLine('Teleport: Basis auswählen (erst „Basen laden").', 'err');
-  els.tpTobase.disabled = true;
+  setBusy(els.tpTobase, true);
   // z+150 als Sicherheitsabstand, damit niemand im Boden landet
   await tpApi('api/teleport', { userId, mode: 'to', x: b.x, y: b.y, z: (typeof b.z === 'number' ? b.z : 0) + 150 },
     `Teleportiert zur Basis (${Math.round(b.x)}/${Math.round(b.y)}).`);
-  els.tpTobase.disabled = false;
+  setBusy(els.tpTobase, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,7 +1082,7 @@ async function bridgeOp(op, params, { needPlayer = true, okMsg, btn } = {}) {
     logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
     return null;
   }
-  if (btn) btn.disabled = true;
+  if (btn) setBusy(btn, true);
   try {
     const data = await apiPost('api/bridge/op', {
       op,
@@ -1068,7 +1095,7 @@ async function bridgeOp(op, params, { needPlayer = true, okMsg, btn } = {}) {
     logLine(`${op}: ${err.message}`, 'err');
     return null;
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) setBusy(btn, false);
   }
 }
 
@@ -1598,7 +1625,7 @@ async function planRestart() {
 }
 
 async function cancelRestart() {
-  els.rsCancel.disabled = true;
+  setBusy(els.rsCancel, true);
   try {
     await apiDelete('api/server/restart');
     logLine('Geplanter Neustart abgebrochen.', 'ok');
@@ -1606,7 +1633,7 @@ async function cancelRestart() {
   } catch (err) {
     logLine(`Neustart abbrechen: ${err.message}`, 'err');
   }
-  els.rsCancel.disabled = false;
+  setBusy(els.rsCancel, false);
 }
 
 function serverTick() {
@@ -1615,11 +1642,12 @@ function serverTick() {
 }
 
 function startServerPolling() {
+  // Weltzeit-Card (Tag/Nacht) einmalig beim Öffnen aktualisieren — braucht die Bridge
+  if (state.features.palOps) refreshWorldTime();
+  // Info/Metriken/Neustart-Status gibt es nur mit REST-Admin
   if (!state.features.serverAdmin) return;
   loadServerInfo();
   loadSettings();
-  // Weltzeit-Card (Tag/Nacht) einmalig beim Öffnen aktualisieren — braucht die Bridge
-  if (state.features.palOps) refreshWorldTime();
   serverTick();
   state.serverTimer = setInterval(serverTick, 10000);
 }
@@ -1634,7 +1662,7 @@ function stopServerPolling() {
 async function srvAnnounce() {
   const message = els.annMsg.value.trim();
   if (!message) return logLine('Ankündigung: Nachricht eingeben.', 'err');
-  els.annBtn.disabled = true;
+  setBusy(els.annBtn, true);
   try {
     await apiPost('api/server/announce', { message });
     logLine('Ankündigung gesendet.', 'ok');
@@ -1642,11 +1670,11 @@ async function srvAnnounce() {
   } catch (err) {
     logLine(`Ankündigung: ${err.message}`, 'err');
   }
-  els.annBtn.disabled = false;
+  setBusy(els.annBtn, false);
 }
 
 async function srvSave() {
-  els.saveBtn.disabled = true;
+  setBusy(els.saveBtn, true);
   els.saveBtn.textContent = 'Speichere…';
   try {
     await apiPost('api/server/save');
@@ -1654,7 +1682,7 @@ async function srvSave() {
   } catch (err) {
     logLine(`Speichern: ${err.message}`, 'err');
   }
-  els.saveBtn.disabled = false;
+  setBusy(els.saveBtn, false);
   els.saveBtn.textContent = 'Welt speichern';
 }
 
@@ -1663,27 +1691,27 @@ async function srvShutdown() {
   els.sdWait.value = waittime;
   const message = els.sdMsg.value.trim();
   if (!window.confirm(`Server in ${waittime} s herunterfahren (mit Speichern)?`)) return;
-  els.sdBtn.disabled = true;
+  setBusy(els.sdBtn, true);
   try {
     await apiPost('api/server/shutdown', { waittime, ...(message ? { message } : {}) });
     logLine(`Shutdown in ${waittime} s eingeleitet.`, 'ok');
   } catch (err) {
     logLine(`Shutdown: ${err.message}`, 'err');
   }
-  els.sdBtn.disabled = false;
+  setBusy(els.sdBtn, false);
 }
 
 async function srvStop() {
   if (!window.confirm('Server sofort stoppen?')) return;
   if (!window.confirm('Wirklich? Der Server stoppt SOFORT und speichert NICHT!')) return;
-  els.stopBtn.disabled = true;
+  setBusy(els.stopBtn, true);
   try {
     await apiPost('api/server/stop');
     logLine('Force-Stop gesendet.', 'ok');
   } catch (err) {
     logLine(`Force-Stop: ${err.message}`, 'err');
   }
-  els.stopBtn.disabled = false;
+  setBusy(els.stopBtn, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1730,10 +1758,19 @@ function mapZoomReset() {
   applyMapTransform();
 }
 
-// Klick auf einen Spieler-Marker: Spieler per Name in state.players suchen
-// und als globale Auswahl setzen
-function mapSelectPlayer(nickName) {
-  const p = state.players.find((x) => x.name === nickName || playerLabel(x) === nickName);
+// Klick auf einen Spieler-Marker: Spieler in state.players suchen und als
+// globale Auswahl setzen. Fallback-Daten liefern userId direkt; echtes
+// Gamedata hat stattdessen `userid` (Steam-ID) → Match gegen p.steamId.
+// Namens-Match nur als letzter Fallback (Namen sind nicht eindeutig).
+function mapSelectPlayer(a) {
+  const nickName = a.NickName || '';
+  let p = null;
+  if (a.userId) {
+    p = state.players.find((x) => x.userId === a.userId);
+  } else if (a.userid) {
+    p = state.players.find((x) => x.steamId === a.userid);
+  }
+  if (!p) p = state.players.find((x) => x.name === nickName || playerLabel(x) === nickName);
   if (!p || !p.userId) {
     return logLine(`Karte: „${nickName || '?'}" nicht in der Spielerliste gefunden — Spielerliste aktualisieren.`, 'err');
   }
@@ -1770,18 +1807,27 @@ function renderMapMarkers() {
 
     let el = null;
     if (a.Type === 'PalBox') {
-      el = document.createElement('button');
-      el.type = 'button';
-      el.className = 'mk mk-base';
-      el.title = (a.GuildName ? `Basis: ${a.GuildName}` : 'Basis') + ' — Klick: gewählten Spieler herteleportieren';
-      el.addEventListener('click', () => mapTeleportToBase(a));
+      const baseTitle = a.GuildName ? `Basis: ${a.GuildName}` : 'Basis';
+      if (state.features.teleport) {
+        el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'mk mk-base';
+        el.title = `${baseTitle} — Klick: gewählten Spieler herteleportieren`;
+        el.addEventListener('click', () => mapTeleportToBase(a));
+      } else {
+        // Ohne Teleport-Feature nur informativ (wie Wild-Pal-Marker)
+        el = document.createElement('div');
+        el.className = 'mk mk-base';
+        el.title = baseTitle;
+      }
     } else if (a.UnitType === 'Player') {
       el = document.createElement('button');
       el.type = 'button';
       el.className = 'mk mk-player';
+      if (a.userId) el.dataset.uid = a.userId; // Fallback-Daten liefern die userId direkt
       const hp = (typeof a.HP === 'number' && typeof a.MaxHP === 'number') ? ` · HP ${a.HP}/${a.MaxHP}` : '';
       el.title = `${a.NickName || 'Spieler'} · Level ${a.level ?? '?'}${hp} — Klick: auswählen`;
-      el.addEventListener('click', () => mapSelectPlayer(a.NickName || ''));
+      el.addEventListener('click', () => mapSelectPlayer(a));
       const label = document.createElement('span');
       label.className = 'mk-label';
       label.textContent = a.NickName || '';
@@ -1805,9 +1851,22 @@ function renderMapMarkers() {
     frag.appendChild(el);
   }
   els.mapMarkers.replaceChildren(frag);
-  els.mapNote.textContent = (els.mapShowWild.checked && wildTotal > MAP_WILD_LIMIT)
-    ? `Wilde Pals: ${wildShown} von ${wildTotal} angezeigt`
-    : '';
+  const notes = [];
+  if (d && d.fallback === true) notes.push('Fallback-Daten: nur Spieler & Basen');
+  if (els.mapShowWild.checked && wildTotal > MAP_WILD_LIMIT) {
+    notes.push(`Wilde Pals: ${wildShown} von ${wildTotal} angezeigt`);
+  }
+  els.mapNote.textContent = notes.join(' · ');
+}
+
+// Ohne offizielles Gamedata (fallback: true) gibt es keine Wild-/Basis-Pals —
+// die Anzeige-Checkboxen deaktivieren; bei Wechsel zurück wieder aktivieren
+function applyMapFallbackUi() {
+  const fb = !!(state.mapData && state.mapData.fallback === true);
+  for (const cb of [els.mapShowWild, els.mapShowCamp]) {
+    cb.disabled = fb;
+    cb.title = fb ? 'Ohne offizielles Gamedata liefert der Server nur Spieler & Basen' : '';
+  }
 }
 
 async function loadMapData() {
@@ -1815,6 +1874,7 @@ async function loadMapData() {
     const d = await apiGet('api/server/gamedata');
     state.lastMapErr = null;
     state.mapData = d;
+    applyMapFallbackUi();
     renderMapMarkers();
     els.mapUpdated.textContent = `Stand: ${new Date().toLocaleTimeString('de-DE')}`;
   } catch (err) {
@@ -2051,14 +2111,14 @@ async function rconSubmit() {
   state.rconHistIdx = state.rconHistory.length;
   els.rconIn.value = '';
   rconPrint(`> ${command}`, 'cmd');
-  els.rconSend.disabled = true;
+  setBusy(els.rconSend, true);
   try {
     const d = await apiPost('api/rcon', { command });
     rconPrint(d.response || '(keine Antwort)');
   } catch (err) {
     rconPrint(`Fehler: ${err.message}`, 'err');
   }
-  els.rconSend.disabled = false;
+  setBusy(els.rconSend, false);
   els.rconIn.focus();
 }
 
@@ -2086,7 +2146,7 @@ function rconKeydown(e) {
 // Tabs
 els.tabs.addEventListener('click', (e) => {
   const btn = e.target.closest('.tab');
-  if (btn) setTab(btn.dataset.tab);
+  if (btn) setTab(btn.dataset.tab, { persist: true });
 });
 
 // Items-Tab
@@ -2141,7 +2201,8 @@ enterSubmit(els.riCount, removeItem);
 enterSubmit(els.tpX, tpGo);
 enterSubmit(els.tpY, tpGo);
 enterSubmit(els.tpZ, tpGo);
-enterSubmit(els.spPalid, spawnPal);
+// Bewusst KEIN enterSubmit für #sp-palid: Enter übernimmt dort nur den
+// Datalist-Vorschlag und darf keinen Spawn auslösen
 enterSubmit(els.rsMin, () => { if (!els.rsPlan.disabled) planRestart(); });
 
 // Teleport

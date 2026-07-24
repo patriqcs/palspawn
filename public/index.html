@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body data-tab="items">
@@ -202,13 +202,13 @@
     <section id="panel-server" class="panel" hidden>
       <div class="panel-inner">
 
-        <div class="card">
+        <div class="card needs-serveradmin">
           <h3 id="srv-name">–</h3>
           <p id="srv-version" class="muted small"></p>
           <p id="srv-desc"></p>
         </div>
 
-        <div class="metric-grid">
+        <div class="metric-grid needs-serveradmin">
           <div class="metric"><div class="val" id="m-fps">–</div><div class="lbl">FPS</div><svg id="fps-spark" viewBox="0 0 120 28" aria-hidden="true"></svg></div>
           <div class="metric"><div class="val" id="m-frametime">–</div><div class="lbl">Frametime (ms)</div></div>
           <div class="metric"><div class="val" id="m-players">–</div><div class="lbl">Spieler</div></div>
@@ -231,7 +231,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card needs-serveradmin">
           <h3>Aktionen</h3>
           <div class="form-row">
             <button id="save-btn">Welt speichern</button>
@@ -242,7 +242,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card needs-serveradmin">
           <h3>Neustart &amp; Stopp</h3>
           <p class="muted small">Ansagen an die Spieler erfolgen automatisch (sofort sowie 30/15/10/5/3/1 min vorher).</p>
           <div class="form-row">
@@ -262,7 +262,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card needs-serveradmin">
           <h3>Einstellungen</h3>
           <p id="settings-hint" class="muted small" hidden>Werte mit ✎ sind direkt editierbar (PalWorldSettings.ini) — Änderungen werden erst nach einem Server-Neustart wirksam. 🔒 = wird von der Container-Konfiguration verwaltet.</p>
           <div class="form-row">
@@ -368,6 +368,6 @@
   <span id="status-caret" aria-hidden="true">▴</span>
 </div>
 
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
