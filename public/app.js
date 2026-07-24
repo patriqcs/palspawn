@@ -888,8 +888,10 @@ async function removeItem() {
   const label = item ? item.name_de : itemId;
   if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
   if (!window.confirm(`${count}× ${label} bei ${selectedPlayerName()} entfernen?`)) return;
-  await bridgeOp('removeItem', { itemId, count },
+  const result = await bridgeOp('removeItem', { itemId, count },
     { okMsg: `${count}× ${label} entfernt.`, btn: els.riBtn });
+  // Anzeige aktuell halten: entferntes Item soll sofort verschwinden
+  if (result && !els.invBox.hidden) loadInventory();
 }
 
 // Inventar des gewählten Spielers auslesen (listInventory-Op) und als
@@ -953,8 +955,9 @@ async function loadInventory() {
 async function dropRandomSlot() {
   if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
   if (!window.confirm(`${selectedPlayerName()} lässt einen zufälligen Inventar-Slot fallen. Sicher?`)) return;
-  await bridgeOp('dropRandomSlot', {},
+  const result = await bridgeOp('dropRandomSlot', {},
     { okMsg: 'Zufälliger Inventar-Slot fallen gelassen.', btn: els.dropBtn });
+  if (result && !els.invBox.hidden) loadInventory();
 }
 
 // ---------------------------------------------------------------------------
