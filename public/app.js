@@ -17,6 +17,22 @@ const state = {
   lastBridgeErr: null,
   rconHistory: [],
   rconHistIdx: 0,
+  // Karte
+  mapTimer: null,      // Gamedata-Polling (nur solange Karten-Tab aktiv)
+  mapData: null,       // letzte GET api/server/gamedata Antwort
+  lastMapErr: null,
+  mapView: { scale: 1, tx: 0, ty: 0 },
+  // Pals
+  pals: null,          // gecachte pals.json
+  palById: null,       // Map id -> Pal-Eintrag
+  // Basis-Teleport
+  bases: [],           // letzte listBases-Antwort
+  // Server-Tab
+  fpsSamples: [],      // letzte 60 serverfps-Werte für die Sparkline
+  lastRestartErr: null,
+  // Audit-Log
+  auditTimer: null,
+  lastAuditErr: null,
 };
 
 const els = {
@@ -57,6 +73,9 @@ const els = {
   tpDel: $('#tp-del'),
   tpPlayer: $('#tp-player'),
   tpToplayer: $('#tp-toplayer'),
+  tpLoadbases: $('#tp-loadbases'),
+  tpBases: $('#tp-bases'),
+  tpTobase: $('#tp-tobase'),
   charActions: $('#char-actions'),
   hpRange: $('#hp-range'),
   hpNum: $('#hp-num'),
@@ -75,6 +94,8 @@ const els = {
   itemIds: $('#item-ids'),
   // Pals-Tab
   spPalid: $('#sp-palid'),
+  spPalIcon: $('#sp-pal-icon'),
+  palIds: $('#pal-ids'),
   spCount: $('#sp-count'),
   spLevel: $('#sp-level'),
   spDespawn: $('#sp-despawn'),
@@ -82,13 +103,20 @@ const els = {
   scCount: $('#sc-count'),
   scOffset: $('#sc-offset'),
   scBtn: $('#sc-btn'),
+  csBtn: $('#cs-btn'),
+  csBox: $('#cs-box'),
   ghHour: $('#gh-hour'),
   ghSet: $('#gh-set'),
   ghDay: $('#gh-day'),
   ghNight: $('#gh-night'),
+  wtInfo: $('#wt-info'),
+  wtRefresh: $('#wt-refresh'),
   wwRadius: $('#ww-radius'),
   wwMax: $('#ww-max'),
   wwBtn: $('#ww-btn'),
+  dwRadius: $('#dw-radius'),
+  dwMax: $('#dw-max'),
+  dwBtn: $('#dw-btn'),
   // Server-Tab
   srvName: $('#srv-name'),
   srvVersion: $('#srv-version'),
@@ -109,7 +137,25 @@ const els = {
   setSearch: $('#set-search'),
   settingsHint: $('#settings-hint'),
   settingsBox: $('#settings-box'),
+  fpsSpark: $('#fps-spark'),
+  rsMin: $('#rs-min'),
+  rsPlan: $('#rs-plan'),
+  rsCancel: $('#rs-cancel'),
+  rsStatus: $('#rs-status'),
+  // Karten-Tab
+  mapZoomIn: $('#map-zoom-in'),
+  mapZoomOut: $('#map-zoom-out'),
+  mapZoomReset: $('#map-zoom-reset'),
+  mapShowWild: $('#map-show-wild'),
+  mapShowCamp: $('#map-show-camp'),
+  mapUpdated: $('#map-updated'),
+  mapViewport: $('#map-viewport'),
+  mapInner: $('#map-inner'),
+  mapMarkers: $('#map-markers'),
+  mapNote: $('#map-note'),
   // Logs-Tab
+  auditBox: $('#audit-box'),
+  disarmBtn: $('#disarm-btn'),
   bridgeAdmin: $('#bridge-admin'),
   bridgeStatus: $('#bridge-status'),
   pauseToggle: $('#pause-toggle'),
@@ -173,6 +219,13 @@ async function apiPost(path, body) {
   return data;
 }
 
+async function apiDelete(path) {
+  const resp = await fetch(path, { method: 'DELETE' });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
 function clampInt(v, min, max, def) {
   const n = parseInt(v, 10);
   if (!Number.isInteger(n)) return def;
@@ -215,6 +268,7 @@ function tabAvailable(tab) {
   if (tab === 'items' || tab === 'players') return true;
   if (tab === 'pals') return f.palOps;
   if (tab === 'server') return f.serverAdmin;
+  if (tab === 'map') return f.serverAdmin;
   if (tab === 'logs') return f.bridgeAdmin || f.rcon;
   return false;
 }
@@ -247,9 +301,15 @@ function setTab(tab) {
   // Polling nur solange der jeweilige Tab aktiv ist
   stopServerPolling();
   stopLogsPolling();
+  stopMapPolling();
   if (tab === 'server') startServerPolling();
-  if (tab === 'logs' && state.features.bridgeAdmin) startLogsPolling();
+  if (tab === 'logs') startLogsPolling();
+  if (tab === 'map') startMapPolling();
   if (tab === 'players') loadBanlist();
+  if (tab === 'pals') {
+    loadPals();
+    refreshWorldTime();
+  }
 }
 
 async function loadConfig() {
@@ -836,6 +896,40 @@ function tpSelectSpot() {
   els.tpZ.value = spot.z;
 }
 
+// Basen des Servers laden (listBases-Op, kein Spieler nötig) und als
+// Teleport-Ziele anbieten
+async function loadBases() {
+  const data = await bridgeOp('listBases', {}, { needPlayer: false, btn: els.tpLoadbases });
+  if (!data) return;
+  const bases = (data.data && Array.isArray(data.data.bases)) ? data.data.bases : [];
+  state.bases = bases;
+  els.tpBases.replaceChildren();
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = bases.length ? `– Basis wählen (${bases.length}) –` : '– keine Basen gefunden –';
+  els.tpBases.appendChild(ph);
+  bases.forEach((b, i) => {
+    if (typeof b.x !== 'number' || typeof b.y !== 'number') return;
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = `Basis ${i + 1} (${Math.round(b.x)}/${Math.round(b.y)})`;
+    els.tpBases.appendChild(opt);
+  });
+  logLine(`${bases.length} Basis/Basen geladen.`, 'ok');
+}
+
+async function tpToBase() {
+  const userId = requirePlayer();
+  if (!userId) return;
+  const b = state.bases[parseInt(els.tpBases.value, 10)];
+  if (!b) return logLine('Teleport: Basis auswählen (erst „Basen laden").', 'err');
+  els.tpTobase.disabled = true;
+  // z+150 als Sicherheitsabstand, damit niemand im Boden landet
+  await tpApi('api/teleport', { userId, mode: 'to', x: b.x, y: b.y, z: (typeof b.z === 'number' ? b.z : 0) + 150 },
+    `Teleportiert zur Basis (${Math.round(b.x)}/${Math.round(b.y)}).`);
+  els.tpTobase.disabled = false;
+}
+
 // ---------------------------------------------------------------------------
 // Bridge-Ops (Charakter-Aktionen + Pals)
 // ---------------------------------------------------------------------------
@@ -1014,6 +1108,114 @@ async function wildWrath() {
     { okMsg: `WildWrath auf ${selectedPlayerName()} ausgelöst.`, btn: els.wwBtn });
 }
 
+async function despawnWild() {
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  const radiusM = clampInt(els.dwRadius.value, 10, 200, 60);
+  const maxPals = clampInt(els.dwMax.value, 1, 50, 30);
+  if (!window.confirm(`Bis zu ${maxPals} wilde Pals im Umkreis von ${radiusM} m um ${selectedPlayerName()} entfernen?`)) return;
+  const data = await bridgeOp('despawnWildPals', { radiusM, maxPals }, { btn: els.dwBtn });
+  if (data) {
+    const n = (data.data && Number.isFinite(data.data.pals)) ? data.data.pals : '?';
+    logLine(`${n} wilde Pal(s) entfernt.`, 'ok');
+  }
+}
+
+// pals.json einmalig laden (beim ersten Öffnen des Pals-Tabs) und als
+// Datalist für die Pal-ID-Eingabe bereitstellen
+async function loadPals() {
+  if (state.pals) return;
+  try {
+    const resp = await fetch('pals.json?v=1');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const pals = await resp.json();
+    state.pals = pals;
+    state.palById = new Map(pals.map((p) => [p.id, p]));
+    const frag = document.createDocumentFragment();
+    for (const p of pals) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.label = p.paldeck ? `${p.name_de} (${p.paldeck})` : p.name_de;
+      frag.appendChild(opt);
+    }
+    els.palIds.replaceChildren(frag);
+    updatePalPreview();
+  } catch (err) {
+    logLine(`Pal-Liste: ${err.message}`, 'err');
+  }
+}
+
+// Icon-Vorschau neben dem Pal-ID-Feld, sobald der Wert einer bekannten ID entspricht
+function updatePalPreview() {
+  const pal = state.palById ? state.palById.get(els.spPalid.value.trim()) : null;
+  if (pal) {
+    els.spPalIcon.src = `palicons/${pal.icon}`;
+    els.spPalIcon.title = pal.name_de;
+    els.spPalIcon.hidden = false;
+  } else {
+    els.spPalIcon.hidden = true;
+  }
+}
+
+// Gefangene Arten des gewählten Spielers anzeigen (getCaughtSpecies-Op):
+// Duplikate in der Liste = Anzahl in Besitz
+async function showCaughtSpecies() {
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  els.csBox.hidden = false;
+  els.csBox.textContent = 'Gefangene Pals werden geladen…';
+  const data = await bridgeOp('getCaughtSpecies', {}, { btn: els.csBtn });
+  if (!data) {
+    els.csBox.textContent = 'Konnte nicht geladen werden (siehe Log).';
+    return;
+  }
+  await loadPals();
+  const species = (data.data && Array.isArray(data.data.species)) ? data.data.species : [];
+  const agg = new Map();
+  for (const id of species) {
+    if (typeof id === 'string' && id) agg.set(id, (agg.get(id) || 0) + 1);
+  }
+  if (!agg.size) {
+    els.csBox.textContent = 'Keine gefangenen Pals gefunden.';
+    return;
+  }
+  const rows = [...agg.entries()].map(([id, count]) => {
+    const pal = state.palById ? state.palById.get(id) : null;
+    return { id, count, pal, label: pal ? pal.name_de : id };
+  }).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'de'));
+
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'inv-row static';
+    row.title = r.id;
+    if (r.pal) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `palicons/${r.pal.icon}`;
+      img.alt = '';
+      row.appendChild(img);
+    }
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = r.label;
+    const ct = document.createElement('span');
+    ct.className = 'ct';
+    ct.textContent = `${r.count}×`;
+    row.append(nm, ct);
+    frag.appendChild(row);
+  }
+  els.csBox.replaceChildren(frag);
+  logLine(`${selectedPlayerName()}: ${rows.length} gefangene Art(en).`, 'ok');
+}
+
+// Tag/Nacht-Anzeige in der Weltzeit-Card (getWorldTime-Op, kein Spieler nötig).
+// Fehler landen über bridgeOp bereits im Log.
+async function refreshWorldTime() {
+  const data = await bridgeOp('getWorldTime', {}, { needPlayer: false, btn: els.wtRefresh });
+  if (!data) return;
+  const night = data.data && data.data.night === true;
+  els.wtInfo.textContent = night ? 'Aktuell: Nacht 🌙' : 'Aktuell: Tag ☀️';
+}
+
 // ---------------------------------------------------------------------------
 // Server-Tab (offizielle REST API)
 // ---------------------------------------------------------------------------
@@ -1037,11 +1239,36 @@ async function loadServerInfo() {
   }
 }
 
+// FPS-Verlauf als kleine Sparkline (inline SVG, letzte 60 Samples)
+function renderFpsSpark() {
+  const s = state.fpsSamples;
+  if (s.length < 2) {
+    els.fpsSpark.replaceChildren();
+    return;
+  }
+  let min = Math.min(...s);
+  let max = Math.max(...s);
+  const pad = Math.max(0.5, (max - min) * 0.15);
+  min -= pad;
+  max += pad;
+  const w = 120, h = 28;
+  const pts = s.map((v, i) =>
+    `${((i / (s.length - 1)) * w).toFixed(1)},${(h - ((v - min) / (max - min)) * h).toFixed(1)}`).join(' ');
+  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  poly.setAttribute('points', pts);
+  els.fpsSpark.replaceChildren(poly);
+}
+
 async function loadServerMetrics() {
   try {
     const d = await apiGet('api/server/metrics');
     state.lastMetricsErr = null;
     els.mFps.textContent = d.serverfps != null ? String(d.serverfps) : '–';
+    if (typeof d.serverfps === 'number' && Number.isFinite(d.serverfps)) {
+      state.fpsSamples.push(d.serverfps);
+      while (state.fpsSamples.length > 60) state.fpsSamples.shift();
+      renderFpsSpark();
+    }
     els.mFrametime.textContent = typeof d.serverframetime === 'number' ? d.serverframetime.toFixed(1) : '–';
     els.mPlayers.textContent = d.currentplayernum != null ? `${d.currentplayernum} / ${d.maxplayernum ?? '?'}` : '–';
     els.mUptime.textContent = fmtUptime(d.uptime);
@@ -1211,12 +1438,74 @@ function renderSettings() {
   els.settingsBox.replaceChildren(table);
 }
 
+// --- Neustart-Planer ---
+
+function updateRestartView(d) {
+  if (d && d.scheduled) {
+    const remain = Math.max(0, (d.at || 0) - Date.now());
+    const mm = Math.floor(remain / 60000);
+    const ss = Math.floor((remain % 60000) / 1000);
+    els.rsStatus.textContent = `Neustart in ${mm}:${String(ss).padStart(2, '0')}`;
+    els.rsCancel.hidden = false;
+    els.rsPlan.disabled = true;
+  } else {
+    els.rsStatus.textContent = 'Kein Neustart geplant.';
+    els.rsCancel.hidden = true;
+    els.rsPlan.disabled = false;
+  }
+}
+
+async function loadRestartStatus() {
+  try {
+    const d = await apiGet('api/server/restart');
+    state.lastRestartErr = null;
+    updateRestartView(d);
+  } catch (err) {
+    if (state.lastRestartErr !== err.message) {
+      state.lastRestartErr = err.message;
+      logLine(`Neustart-Status: ${err.message}`, 'err');
+    }
+  }
+}
+
+async function planRestart() {
+  const minutes = clampInt(els.rsMin.value, 1, 120, 15);
+  els.rsMin.value = minutes;
+  if (!window.confirm(`Server-Neustart in ${minutes} Minute(n) planen? Die Ansagen im Spiel erfolgen automatisch.`)) return;
+  els.rsPlan.disabled = true;
+  try {
+    const d = await apiPost('api/server/restart', { minutes });
+    logLine(`Neustart in ${minutes} Minute(n) geplant.`, 'ok');
+    updateRestartView({ scheduled: true, at: d.at });
+  } catch (err) {
+    logLine(`Neustart planen: ${err.message}`, 'err');
+    els.rsPlan.disabled = false;
+  }
+}
+
+async function cancelRestart() {
+  els.rsCancel.disabled = true;
+  try {
+    await apiDelete('api/server/restart');
+    logLine('Geplanter Neustart abgebrochen.', 'ok');
+    updateRestartView({ scheduled: false });
+  } catch (err) {
+    logLine(`Neustart abbrechen: ${err.message}`, 'err');
+  }
+  els.rsCancel.disabled = false;
+}
+
+function serverTick() {
+  loadServerMetrics();
+  loadRestartStatus();
+}
+
 function startServerPolling() {
   if (!state.features.serverAdmin) return;
   loadServerInfo();
   loadSettings();
-  loadServerMetrics();
-  state.serverTimer = setInterval(loadServerMetrics, 10000);
+  serverTick();
+  state.serverTimer = setInterval(serverTick, 10000);
 }
 
 function stopServerPolling() {
@@ -1279,6 +1568,132 @@ async function srvStop() {
     logLine(`Force-Stop: ${err.message}`, 'err');
   }
   els.stopBtn.disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// Karten-Tab: Weltkarte mit Live-Markern aus api/server/gamedata
+// ---------------------------------------------------------------------------
+
+// Bounds dieses Kartenbilds (verifiziert): X+ = Norden = oben, Y+ = Osten = rechts
+function worldToImage(x, y) {
+  return { u: (y + 724400) / 1448800, v: (349400 - x) / 1448800 };
+}
+
+const MAP_WILD_LIMIT = 1500;
+
+function applyMapTransform() {
+  const s = state.mapView;
+  els.mapInner.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+}
+
+// Verschiebung so begrenzen, dass die Karte den Viewport immer voll bedeckt
+function clampMapView() {
+  const rect = els.mapViewport.getBoundingClientRect();
+  const s = state.mapView;
+  s.tx = Math.min(0, Math.max(rect.width * (1 - s.scale), s.tx));
+  s.ty = Math.min(0, Math.max(rect.height * (1 - s.scale), s.ty));
+}
+
+// Zoom um den Punkt (cx, cy) im Viewport (z. B. Mausposition) zentriert
+function mapZoomAt(factor, cx, cy) {
+  const s = state.mapView;
+  const ns = Math.min(6, Math.max(1, s.scale * factor));
+  if (ns === s.scale) return;
+  s.tx = cx - (cx - s.tx) * (ns / s.scale);
+  s.ty = cy - (cy - s.ty) * (ns / s.scale);
+  s.scale = ns;
+  clampMapView();
+  applyMapTransform();
+}
+
+function mapZoomReset() {
+  const s = state.mapView;
+  s.scale = 1;
+  s.tx = 0;
+  s.ty = 0;
+  applyMapTransform();
+}
+
+// Marker aus den gecachten Gamedata rendern. Performant: ein DocumentFragment,
+// keine Event-Listener pro Marker (title-Attribut reicht als Tooltip).
+function renderMapMarkers() {
+  const d = state.mapData;
+  const frag = document.createDocumentFragment();
+  let wildShown = 0;
+  let wildTotal = 0;
+  const actors = (d && Array.isArray(d.ActorData)) ? d.ActorData : [];
+  for (const a of actors) {
+    if (!a || typeof a.LocationX !== 'number' || typeof a.LocationY !== 'number') continue;
+    // Weltenbaum-Subzone liegt außerhalb der Hauptkarte — Marker weglassen
+    if (a.LocationX > 340000 && a.LocationY < -470000) continue;
+    const { u, v } = worldToImage(a.LocationX, a.LocationY);
+    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+
+    let el = null;
+    if (a.Type === 'PalBox') {
+      el = document.createElement('div');
+      el.className = 'mk mk-base';
+      el.title = a.GuildName ? `Basis: ${a.GuildName}` : 'Basis';
+    } else if (a.UnitType === 'Player') {
+      el = document.createElement('div');
+      el.className = 'mk mk-player';
+      const hp = (typeof a.HP === 'number' && typeof a.MaxHP === 'number') ? ` · HP ${a.HP}/${a.MaxHP}` : '';
+      el.title = `${a.NickName || 'Spieler'} · Level ${a.level ?? '?'}${hp}`;
+      const label = document.createElement('span');
+      label.className = 'mk-label';
+      label.textContent = a.NickName || '';
+      el.appendChild(label);
+    } else if (a.UnitType === 'WildPal') {
+      wildTotal++;
+      if (!els.mapShowWild.checked || wildShown >= MAP_WILD_LIMIT) continue;
+      wildShown++;
+      el = document.createElement('div');
+      el.className = 'mk mk-wild';
+      if (a.NickName) el.title = a.NickName;
+    } else if (a.UnitType === 'BaseCampPal') {
+      if (!els.mapShowCamp.checked) continue;
+      el = document.createElement('div');
+      el.className = 'mk mk-camp';
+      if (a.NickName) el.title = a.NickName;
+    }
+    if (!el) continue;
+    el.style.left = `${(u * 100).toFixed(3)}%`;
+    el.style.top = `${(v * 100).toFixed(3)}%`;
+    frag.appendChild(el);
+  }
+  els.mapMarkers.replaceChildren(frag);
+  els.mapNote.textContent = (els.mapShowWild.checked && wildTotal > MAP_WILD_LIMIT)
+    ? `Wilde Pals: ${wildShown} von ${wildTotal} angezeigt`
+    : '';
+}
+
+async function loadMapData() {
+  try {
+    const d = await apiGet('api/server/gamedata');
+    state.lastMapErr = null;
+    state.mapData = d;
+    renderMapMarkers();
+    els.mapUpdated.textContent = `Stand: ${new Date().toLocaleTimeString('de-DE')}`;
+  } catch (err) {
+    // Beim 10-s-Polling nicht denselben Fehler wiederholt loggen
+    if (state.lastMapErr !== err.message) {
+      state.lastMapErr = err.message;
+      logLine(`Karte: ${err.message}`, 'err');
+    }
+  }
+}
+
+function startMapPolling() {
+  if (!state.features.serverAdmin) return;
+  loadMapData();
+  state.mapTimer = setInterval(loadMapData, 10000);
+}
+
+function stopMapPolling() {
+  if (state.mapTimer) {
+    clearInterval(state.mapTimer);
+    state.mapTimer = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,9 +1776,85 @@ function logsTick() {
   refreshBridgeLogs();
 }
 
+// --- Aktions-Historie (Audit-Log) ---
+
+const AUDIT_LABELS = {
+  give: 'Items gegeben',
+  teleport: 'Teleport',
+  kick: 'Gekickt',
+  ban: 'Gebannt',
+  unban: 'Entbannt',
+  announce: 'Ankündigung',
+  save: 'Welt gespeichert',
+  shutdown: 'Shutdown',
+  stop: 'Force-Stop',
+  setting: 'Setting geändert',
+  rcon: 'RCON',
+  pause: 'Trolls-Pause',
+  restartScheduled: 'Neustart geplant',
+  restartCancelled: 'Neustart abgebrochen',
+  restartExecuted: 'Neustart ausgeführt',
+};
+
+function auditActionLabel(e) {
+  if (e.action === 'bridgeOp') return e.op || 'Bridge-Op';
+  return AUDIT_LABELS[e.action] || e.action || '?';
+}
+
+async function loadAudit() {
+  try {
+    const d = await apiGet('api/audit');
+    state.lastAuditErr = null;
+    const entries = Array.isArray(d.entries) ? d.entries.slice().reverse() : []; // neueste oben
+    if (!entries.length) {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'Noch keine Aktionen aufgezeichnet.';
+      els.auditBox.replaceChildren(p);
+      return;
+    }
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const frag = document.createDocumentFragment();
+    for (const e of entries) {
+      const row = document.createElement('div');
+      row.className = 'audit-row';
+      const at = document.createElement('span');
+      at.className = 'at';
+      const dt = new Date(e.ts);
+      at.textContent = Number.isNaN(dt.getTime())
+        ? '–'
+        : (dt < todayStart ? `${dt.toLocaleDateString('de-DE')} ` : '') + dt.toLocaleTimeString('de-DE');
+      const aa = document.createElement('span');
+      aa.className = 'aa';
+      aa.textContent = auditActionLabel(e);
+      const ad = document.createElement('span');
+      ad.className = 'ad';
+      ad.textContent = Object.entries(e)
+        .filter(([k]) => k !== 'ts' && k !== 'action' && !(e.action === 'bridgeOp' && k === 'op'))
+        .map(([k, v]) => `${k}=${v !== null && typeof v === 'object' ? JSON.stringify(v) : v}`)
+        .join(' ');
+      row.append(at, aa, ad);
+      frag.appendChild(row);
+    }
+    els.auditBox.replaceChildren(frag);
+  } catch (err) {
+    if (state.lastAuditErr !== err.message) {
+      state.lastAuditErr = err.message;
+      logLine(`Aktions-Historie: ${err.message}`, 'err');
+    }
+  }
+}
+
+// Bridge-Polling (5 s) nur mit bridgeAdmin; Audit-Polling (10 s) läuft immer,
+// solange der Logs-Tab aktiv ist
 function startLogsPolling() {
-  logsTick();
-  state.logsTimer = setInterval(logsTick, 5000);
+  if (state.features.bridgeAdmin) {
+    logsTick();
+    state.logsTimer = setInterval(logsTick, 5000);
+  }
+  loadAudit();
+  state.auditTimer = setInterval(loadAudit, 10000);
 }
 
 function stopLogsPolling() {
@@ -1371,6 +1862,16 @@ function stopLogsPolling() {
     clearInterval(state.logsTimer);
     state.logsTimer = null;
   }
+  if (state.auditTimer) {
+    clearInterval(state.auditTimer);
+    state.auditTimer = null;
+  }
+}
+
+// Mod in den Ruhezustand versetzen (disarm-Op, kein Spieler nötig)
+async function disarmMod() {
+  if (!window.confirm('Setzt den Mod in den Ruhezustand, damit Re-Joins sauber laufen. Er aktiviert sich beim nächsten Spieler-Join automatisch wieder. Fortfahren?')) return;
+  await bridgeOp('disarm', {}, { needPlayer: false, okMsg: 'Mod entschärft.', btn: els.disarmBtn });
 }
 
 async function togglePause() {
@@ -1481,6 +1982,8 @@ els.tpToplayer.addEventListener('click', tpToPlayer);
 els.tpSave.addEventListener('click', tpSaveSpot);
 els.tpDel.addEventListener('click', tpDeleteSpot);
 els.tpSpots.addEventListener('change', tpSelectSpot);
+els.tpLoadbases.addEventListener('click', loadBases);
+els.tpTobase.addEventListener('click', tpToBase);
 
 // Spieler-Tab
 els.unbanSelect.addEventListener('change', () => {
@@ -1503,11 +2006,15 @@ els.dropBtn.addEventListener('click', dropRandomSlot);
 
 // Pals-Tab
 els.spBtn.addEventListener('click', spawnPal);
+els.spPalid.addEventListener('input', updatePalPreview);
 els.scBtn.addEventListener('click', spawnCaughtPal);
+els.csBtn.addEventListener('click', showCaughtSpecies);
 els.ghSet.addEventListener('click', () => setGameHour(clampInt(els.ghHour.value, 0, 23, 9)));
 els.ghDay.addEventListener('click', () => setGameHour(9));
 els.ghNight.addEventListener('click', () => setGameHour(22));
+els.wtRefresh.addEventListener('click', refreshWorldTime);
 els.wwBtn.addEventListener('click', wildWrath);
+els.dwBtn.addEventListener('click', despawnWild);
 
 // Server-Tab
 els.annBtn.addEventListener('click', srvAnnounce);
@@ -1520,9 +2027,51 @@ els.setSearch.addEventListener('input', () => {
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(renderSettings, 120);
 });
+els.rsPlan.addEventListener('click', planRestart);
+els.rsCancel.addEventListener('click', cancelRestart);
+
+// Karten-Tab: Zoom (Mausrad + Buttons) und Pan (Drag)
+els.mapViewport.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = els.mapViewport.getBoundingClientRect();
+  mapZoomAt(e.deltaY < 0 ? 1.25 : 0.8, e.clientX - rect.left, e.clientY - rect.top);
+}, { passive: false });
+els.mapZoomIn.addEventListener('click', () => {
+  const rect = els.mapViewport.getBoundingClientRect();
+  mapZoomAt(1.5, rect.width / 2, rect.height / 2);
+});
+els.mapZoomOut.addEventListener('click', () => {
+  const rect = els.mapViewport.getBoundingClientRect();
+  mapZoomAt(1 / 1.5, rect.width / 2, rect.height / 2);
+});
+els.mapZoomReset.addEventListener('click', mapZoomReset);
+let mapDrag = null;
+els.mapViewport.addEventListener('pointerdown', (e) => {
+  mapDrag = { x: e.clientX, y: e.clientY };
+  els.mapViewport.setPointerCapture(e.pointerId);
+  els.mapViewport.classList.add('dragging');
+});
+els.mapViewport.addEventListener('pointermove', (e) => {
+  if (!mapDrag) return;
+  const s = state.mapView;
+  s.tx += e.clientX - mapDrag.x;
+  s.ty += e.clientY - mapDrag.y;
+  mapDrag = { x: e.clientX, y: e.clientY };
+  clampMapView();
+  applyMapTransform();
+});
+function mapDragEnd() {
+  mapDrag = null;
+  els.mapViewport.classList.remove('dragging');
+}
+els.mapViewport.addEventListener('pointerup', mapDragEnd);
+els.mapViewport.addEventListener('pointercancel', mapDragEnd);
+els.mapShowWild.addEventListener('change', renderMapMarkers);
+els.mapShowCamp.addEventListener('change', renderMapMarkers);
 
 // Logs-Tab
 els.pauseToggle.addEventListener('change', togglePause);
+els.disarmBtn.addEventListener('click', disarmMod);
 els.rconIn.addEventListener('keydown', rconKeydown);
 els.rconSend.addEventListener('click', rconSubmit);
 

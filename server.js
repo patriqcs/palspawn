@@ -57,6 +57,23 @@ function saveBanName(userid, name) {
   }
 }
 
+// Audit-Log: jede Admin-Aktion als JSON-Zeile (Rotation bei 1 MB)
+const AUDIT_FILE = path.join(DATA_DIR, 'audit.jsonl');
+
+function audit(action, details = {}) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    try {
+      if (fs.statSync(AUDIT_FILE).size > 1024 * 1024) {
+        fs.renameSync(AUDIT_FILE, `${AUDIT_FILE}.1`);
+      }
+    } catch { /* Datei existiert noch nicht */ }
+    fs.appendFileSync(AUDIT_FILE, `${JSON.stringify({ ts: Date.now(), action, ...details })}\n`);
+  } catch (err) {
+    console.warn(`Audit nicht schreibbar: ${err.message}`);
+  }
+}
+
 const app = express();
 app.use(express.json());
 
@@ -354,6 +371,7 @@ app.post('/api/give', async (req, res) => {
           ...(r.ok === false ? { error: r.error || 'Fehler im Mod (Inventar voll?)' } : {}),
         };
       });
+      audit('give', { userId, items: items.map((it) => `${it.amount}x ${it.id}`).join(', ') });
       return res.json({ results });
     } catch (err) {
       return res.status(502).json({ error: err.message, results: [] });
@@ -376,6 +394,7 @@ app.post('/api/give', async (req, res) => {
         results.push({ id: it.id, amount: it.amount, ok: false, error: err.message });
       }
     }
+    audit('give', { userId, items: items.map((it) => `${it.amount}x ${it.id}`).join(', ') });
     res.json({ results });
   } catch (err) {
     res.status(502).json({ error: err.message, results });
@@ -457,6 +476,7 @@ app.post('/api/teleport', async (req, res) => {
     if (!r || r.ok === false) {
       return res.status(502).json({ error: (r && r.error) || resp.error || 'Teleport fehlgeschlagen' });
     }
+    audit('teleport', { userId, mode });
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -523,7 +543,9 @@ app.post('/api/server/announce', async (req, res) => {
     return res.status(400).json({ error: 'message muss 1-300 Zeichen lang sein' });
   }
   try {
-    res.json(await palApi('/announce', { method: 'POST', body: JSON.stringify({ message }) }));
+    const result = await palApi('/announce', { method: 'POST', body: JSON.stringify({ message }) });
+    audit('announce', { message });
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -532,7 +554,9 @@ app.post('/api/server/announce', async (req, res) => {
 app.post('/api/server/save', async (req, res) => {
   if (!requireServerAdmin(res)) return;
   try {
-    res.json(await palApi('/save', { method: 'POST' }, 60000));
+    const result = await palApi('/save', { method: 'POST' }, 60000);
+    audit('save');
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -546,10 +570,12 @@ app.post('/api/server/shutdown', async (req, res) => {
   }
   const message = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
   try {
-    res.json(await palApi('/shutdown', {
+    const result = await palApi('/shutdown', {
       method: 'POST',
       body: JSON.stringify({ waittime, ...(message ? { message } : {}) }),
-    }));
+    });
+    audit('shutdown', { waittime, ...(message ? { message } : {}) });
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -558,7 +584,9 @@ app.post('/api/server/shutdown', async (req, res) => {
 app.post('/api/server/stop', async (req, res) => {
   if (!requireServerAdmin(res)) return;
   try {
-    res.json(await palApi('/stop', { method: 'POST' }));
+    const result = await palApi('/stop', { method: 'POST' });
+    audit('stop');
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -657,6 +685,7 @@ app.post('/api/server/settings-file', async (req, res) => {
     const tmp = `${SETTINGS_INI}.tmp-palspawn`;
     await fs.promises.writeFile(tmp, newText);
     await fs.promises.rename(tmp, SETTINGS_INI);
+    audit('setting', { key, value: raw });
     res.json({ ok: true, key, value: raw });
   } catch (err) {
     res.status(502).json({ error: `PalWorldSettings.ini nicht schreibbar: ${err.message}` });
@@ -714,12 +743,105 @@ for (const action of ['kick', 'ban', 'unban']) {
       if (action === 'ban' && typeof req.body?.name === 'string' && req.body.name.trim()) {
         saveBanName(userid, req.body.name.trim().slice(0, 60));
       }
+      audit(action, { userId: userid, ...(message ? { message } : {}) });
       res.json(result);
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Geplanter Neustart: sofortige Ankündigung, weitere bei 30/15/10/5/3/1 Min,
+// dann graceful Shutdown (Container-Restart-Policy bringt den Server zurück).
+// Läuft serverseitig — übersteht geschlossene Browser, nicht aber einen
+// palspawn-Neustart (dann einfach neu planen).
+// ---------------------------------------------------------------------------
+
+let restartPlan = null; // { at, minutes, timers: [] }
+
+function cancelRestartPlan() {
+  if (!restartPlan) return false;
+  for (const t of restartPlan.timers) clearTimeout(t);
+  restartPlan = null;
+  return true;
+}
+
+app.get('/api/server/restart', (req, res) => {
+  res.json(restartPlan
+    ? { scheduled: true, at: restartPlan.at, minutes: restartPlan.minutes }
+    : { scheduled: false });
+});
+
+app.post('/api/server/restart', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  const minutes = clampInt(req.body?.minutes, 1, 120, null);
+  if (minutes === null) return res.status(400).json({ error: 'minutes muss 1-120 sein' });
+  if (restartPlan) return res.status(409).json({ error: 'Es ist bereits ein Neustart geplant' });
+  const say = (message) => palApi('/announce', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  }).catch((err) => console.warn(`Neustart-Ansage fehlgeschlagen: ${err.message}`));
+  try {
+    await say(`Server-Neustart in ${minutes} Minute(n)!`);
+  } catch { /* say fängt selbst */ }
+  const timers = [];
+  for (const m of [30, 15, 10, 5, 3, 1]) {
+    if (m < minutes) {
+      timers.push(setTimeout(() => say(`Server-Neustart in ${m} Minute(n)!`), (minutes - m) * 60000));
+    }
+  }
+  timers.push(setTimeout(async () => {
+    restartPlan = null;
+    try {
+      await palApi('/shutdown', {
+        method: 'POST',
+        body: JSON.stringify({ waittime: 10, message: 'Neustart jetzt!' }),
+      });
+      audit('restartExecuted', { minutes });
+    } catch (err) {
+      console.warn(`Geplanter Neustart fehlgeschlagen: ${err.message}`);
+    }
+  }, Math.max(10000, minutes * 60000 - 10000)));
+  restartPlan = { at: Date.now() + minutes * 60000, minutes, timers };
+  audit('restartScheduled', { minutes });
+  res.json({ ok: true, at: restartPlan.at, minutes });
+});
+
+app.delete('/api/server/restart', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  if (!cancelRestartPlan()) return res.json({ ok: true, scheduled: false });
+  audit('restartCancelled');
+  try {
+    await palApi('/announce', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Server-Neustart abgebrochen.' }),
+    });
+  } catch { /* Ansage ist optional */ }
+  res.json({ ok: true, scheduled: false });
+});
+
+// ---------------------------------------------------------------------------
+// Audit-Log abrufen (neueste zuletzt)
+// ---------------------------------------------------------------------------
+
+app.get('/api/audit', async (req, res) => {
+  try {
+    let text = '';
+    try {
+      text = await fs.promises.readFile(AUDIT_FILE, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    const lines = text.split('\n').filter(Boolean);
+    const entries = lines.slice(-200).map((l) => {
+      try { return JSON.parse(l); } catch { return null; }
+    }).filter(Boolean);
+    res.json({ entries });
+  } catch (err) {
+    res.status(502).json({ error: `Audit-Log nicht lesbar: ${err.message}` });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Bridge-Ops (PalChaos-Mod): validierte Whitelist weiterer In-Game-Operationen
@@ -809,6 +931,34 @@ const BRIDGE_OPS = {
     target: 'required',
     build() { return { step: { op: 'listInventory' } }; },
   },
+  getCaughtSpecies: {
+    target: 'required',
+    build() { return { step: { op: 'getCaughtSpecies' } }; },
+  },
+  listBases: {
+    target: 'optional',
+    build() { return { step: { op: 'listBases' } }; },
+  },
+  getWorldTime: {
+    target: 'optional',
+    build() { return { step: { op: 'getWorldTime' } }; },
+  },
+  despawnWildPals: {
+    target: 'required',
+    build(b) {
+      return {
+        step: {
+          op: 'despawnWildPals',
+          radiusM: clampInt(b.radiusM, 10, 200, 60),
+          maxPals: clampInt(b.maxPals, 1, 50, 30),
+        },
+      };
+    },
+  },
+  disarm: {
+    target: 'optional',
+    build() { return { step: { op: 'disarm' } }; },
+  },
   spawnPal: {
     target: 'required',
     timeoutMs: 90000, // Spawn-Verify im Mod dauert bis ~61 s, Bridge wartet 75 s
@@ -865,6 +1015,11 @@ app.post('/api/bridge/op', async (req, res) => {
     if (!r || r.ok === false) {
       return res.status(502).json({ error: (r && r.error) || resp.error || `${body.op} fehlgeschlagen` });
     }
+    // Read-only-Abfragen nicht ins Audit-Log
+    const READ_OPS = new Set(['getPos', 'listInventory', 'getCaughtSpecies', 'listBases', 'getWorldTime']);
+    if (!READ_OPS.has(body.op)) {
+      audit('bridgeOp', { userId: body.userId || null, ...built.step });
+    }
     res.json({ ok: true, data: r.data ?? null });
   } catch (err) {
     res.status(502).json({ error: err.message });
@@ -913,10 +1068,12 @@ app.post('/api/bridge/pause', async (req, res) => {
     return res.status(400).json({ error: 'paused muss true oder false sein' });
   }
   try {
-    res.json(await bridgeFetch('/api/pause', {
+    const result = await bridgeFetch('/api/pause', {
       method: 'POST',
       body: JSON.stringify({ paused: req.body.paused }),
-    }));
+    });
+    audit('pause', { paused: req.body.paused });
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -942,6 +1099,7 @@ app.post('/api/rcon', async (req, res) => {
   try {
     await rcon.connect();
     const response = await rcon.command(command);
+    audit('rcon', { command });
     res.json({ response: response.trim() });
   } catch (err) {
     res.status(502).json({ error: err.message });

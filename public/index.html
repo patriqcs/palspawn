@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -26,6 +26,7 @@
   <button type="button" class="tab" data-tab="players">Spieler</button>
   <button type="button" class="tab" data-tab="pals" hidden>Pals</button>
   <button type="button" class="tab" data-tab="server" hidden>Server</button>
+  <button type="button" class="tab" data-tab="map" hidden>Karte</button>
   <button type="button" class="tab" data-tab="logs" hidden>Logs</button>
 </nav>
 
@@ -91,6 +92,11 @@
               <select id="tp-player" aria-label="Zu Spieler teleportieren"><option value="">– zu Spieler –</option></select>
               <button id="tp-toplayer">Dorthin</button>
             </div>
+            <div class="tp-row">
+              <button id="tp-loadbases" class="secondary">Basen laden</button>
+              <select id="tp-bases" aria-label="Basis wählen"><option value="">– Basis wählen –</option></select>
+              <button id="tp-tobase">Zur Basis</button>
+            </div>
           </div>
         </details>
 
@@ -136,12 +142,14 @@
           <h3>Wild-Pal spawnen</h3>
           <p class="muted small">Spawnt beim gewählten Spieler. Der Spawn kann bis zu 75 Sekunden dauern.</p>
           <div class="form-row">
-            <input id="sp-palid" type="text" placeholder="Pal-ID (z. B. SheepBall)" autocomplete="off">
+            <input id="sp-palid" type="text" list="pal-ids" placeholder="Pal-ID (z. B. SheepBall)" autocomplete="off">
+            <img id="sp-pal-icon" class="pal-preview" width="28" height="28" alt="" hidden>
             <label>Anzahl <input id="sp-count" type="number" min="1" max="10" value="1"></label>
             <label>Level <input id="sp-level" type="number" min="1" max="65" value="1"></label>
             <label>Despawn nach <input id="sp-despawn" type="number" min="5" max="600" placeholder="Sek."></label>
             <button id="sp-btn">Spawnen</button>
           </div>
+          <datalist id="pal-ids"></datalist>
         </div>
 
         <div class="card">
@@ -155,12 +163,25 @@
         </div>
 
         <div class="card">
+          <h3>Gefangene Pals</h3>
+          <p class="muted small">Zeigt die gefangenen Pal-Arten des gewählten Spielers.</p>
+          <div class="form-row">
+            <button id="cs-btn">Anzeigen</button>
+          </div>
+          <div id="cs-box" class="inv-box" hidden></div>
+        </div>
+
+        <div class="card">
           <h3>Weltzeit</h3>
           <div class="form-row">
             <select id="gh-hour" aria-label="Stunde wählen"></select>
             <button id="gh-set">Setzen</button>
             <button id="gh-day" class="secondary">Tag (9 Uhr)</button>
             <button id="gh-night" class="secondary">Nacht (22 Uhr)</button>
+          </div>
+          <div class="form-row">
+            <span id="wt-info" class="muted">–</span>
+            <button id="wt-refresh" class="secondary" title="Tag/Nacht aktualisieren">&#x21bb;</button>
           </div>
         </div>
 
@@ -171,6 +192,12 @@
             <label>Radius (m) <input id="ww-radius" type="number" min="10" max="200" value="60"></label>
             <label>max. Pals <input id="ww-max" type="number" min="1" max="15" value="8"></label>
             <button id="ww-btn" class="danger">WildWrath</button>
+          </div>
+          <p class="muted small spaced-top">Wilde Pals entfernen: despawnt wilde Pals im Umkreis des gewählten Spielers.</p>
+          <div class="form-row">
+            <label>Radius (m) <input id="dw-radius" type="number" min="10" max="200" value="60"></label>
+            <label>max. Anzahl <input id="dw-max" type="number" min="1" max="50" value="30"></label>
+            <button id="dw-btn" class="danger">Wilde Pals entfernen</button>
           </div>
         </div>
 
@@ -188,7 +215,7 @@
         </div>
 
         <div class="metric-grid">
-          <div class="metric"><div class="val" id="m-fps">–</div><div class="lbl">FPS</div></div>
+          <div class="metric"><div class="val" id="m-fps">–</div><div class="lbl">FPS</div><svg id="fps-spark" viewBox="0 0 120 28" aria-hidden="true"></svg></div>
           <div class="metric"><div class="val" id="m-frametime">–</div><div class="lbl">Frametime (ms)</div></div>
           <div class="metric"><div class="val" id="m-players">–</div><div class="lbl">Spieler</div></div>
           <div class="metric"><div class="val" id="m-uptime">–</div><div class="lbl">Uptime</div></div>
@@ -220,6 +247,17 @@
         </div>
 
         <div class="card">
+          <h3>Geplanter Neustart</h3>
+          <p class="muted small">Ansagen an die Spieler erfolgen automatisch (sofort sowie 30/15/10/5/3/1 min vorher).</p>
+          <div class="form-row">
+            <label>Minuten <input id="rs-min" type="number" min="1" max="120" value="15"></label>
+            <button id="rs-plan">Neustart planen</button>
+            <button id="rs-cancel" class="danger" hidden>Abbrechen</button>
+          </div>
+          <p id="rs-status" class="muted small"></p>
+        </div>
+
+        <div class="card">
           <h3>Einstellungen</h3>
           <p id="settings-hint" class="muted small" hidden>Werte mit ✎ sind direkt editierbar (PalWorldSettings.ini) — Änderungen werden erst nach einem Server-Neustart wirksam. 🔒 = wird von der Container-Konfiguration verwaltet.</p>
           <div class="form-row">
@@ -233,14 +271,53 @@
       </div>
     </section>
 
+    <!-- ================= Karte ================= -->
+    <section id="panel-map" class="panel" hidden>
+      <div class="panel-inner">
+
+        <div class="form-row map-toolbar">
+          <button id="map-zoom-in" class="secondary" title="Hineinzoomen">+</button>
+          <button id="map-zoom-out" class="secondary" title="Herauszoomen">&minus;</button>
+          <button id="map-zoom-reset" class="secondary">Reset</button>
+          <label class="toggle"><input type="checkbox" id="map-show-wild"> Wilde Pals anzeigen</label>
+          <label class="toggle"><input type="checkbox" id="map-show-camp"> Basis-Pals anzeigen</label>
+          <span id="map-updated" class="muted small"></span>
+        </div>
+
+        <div id="map-viewport" class="map-viewport">
+          <div id="map-inner" class="map-transform">
+            <img src="worldmap.webp" alt="Weltkarte" draggable="false">
+            <div id="map-markers" class="map-markers"></div>
+          </div>
+        </div>
+
+        <div class="map-legend">
+          <span class="lg"><span class="mk-sample s-player"></span> Spieler</span>
+          <span class="lg"><span class="mk-sample s-base"></span> Basis</span>
+          <span class="lg"><span class="mk-sample s-wild"></span> Wilde Pals</span>
+          <span class="lg"><span class="mk-sample s-camp"></span> Basis-Pals</span>
+          <span id="map-note"></span>
+        </div>
+
+      </div>
+    </section>
+
     <!-- ================= Logs ================= -->
     <section id="panel-logs" class="panel" hidden>
       <div class="panel-inner">
+
+        <div class="card">
+          <h3>Aktions-Historie</h3>
+          <div id="audit-box" class="audit-box"><p class="muted">Historie wird geladen…</p></div>
+        </div>
 
         <div id="bridge-admin" class="card" hidden>
           <h3>Mod-Status</h3>
           <div id="bridge-status" class="kv"><span class="muted">Status wird geladen…</span></div>
           <label class="toggle"><input type="checkbox" id="pause-toggle"> Twitch-Trolls pausiert</label>
+          <div class="form-row">
+            <button id="disarm-btn" class="secondary">Mod entschärfen</button>
+          </div>
           <h3 class="spaced">Bridge-Log</h3>
           <div id="bridge-logs" class="console"></div>
         </div>
@@ -277,6 +354,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

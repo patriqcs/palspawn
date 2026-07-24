@@ -6,16 +6,25 @@ Web-Admin-Tool für Palworld-Server mit Tab-Oberfläche:
   Rarität), durchsuch-, filter- und sortierbar; spawnt ausgewählte Items in
   gewünschter Menge ins Inventar eines Online-Spielers.
 - **Spieler** — Online-Liste (Level, Position, IDs mit Klick-zum-Kopieren),
-  Kick/Ban/Unban, Teleport (Koordinaten, gespeicherte Orte, zu Spieler),
-  Charakter-Aktionen: HP setzen, Party-Pals umbenennen, Items entfernen,
-  Zufalls-Drop.
-- **Pals** — Wild-Pals spawnen (ID, Anzahl, Level, Despawn-Timer), gefangene
-  Pals des Spielers spawnen, Weltzeit setzen (Tag/Nacht), WildWrath.
-- **Server** — Dashboard (FPS, Frametime, Spieler, Uptime, Ingame-Tage, Basen),
-  Ankündigungen, Welt speichern, Shutdown mit Countdown, Force-Stop, alle
-  Server-Settings durchsuchbar (read-only).
-- **Logs** — Mod-Status der Paladdon-Bridge (Version, armed, Fehler),
-  Twitch-Troll-Pause, Bridge-Log; im PalDefender-Modus eine RCON-Konsole.
+  Kick/Ban/Unban, Teleport (Koordinaten, gespeicherte Orte, zu Spieler,
+  zu Server-Basen), Charakter-Aktionen: HP setzen, Party-Pals umbenennen,
+  Items entfernen, Zufalls-Drop.
+- **Pals** — Wild-Pals spawnen (ID mit Autovervollständigung aus 299 Pals +
+  Icon-Vorschau, Anzahl, Level, Despawn-Timer), gefangene Pals des Spielers
+  spawnen oder als Arten-Übersicht anzeigen, Weltzeit setzen (inkl.
+  Tag/Nacht-Anzeige), WildWrath, wilde Pals im Umkreis entfernen.
+- **Server** — Dashboard (FPS mit Sparkline, Frametime, Spieler, Uptime,
+  Ingame-Tage, Basen), Ankündigungen, Welt speichern, Shutdown mit Countdown,
+  Force-Stop, geplanter Neustart (1–120 min, automatische In-Game-Ansagen,
+  Countdown, abbrechbar), alle Server-Settings durchsuchbar (editierbar via
+  ini, sonst read-only).
+- **Karte** — 4096²-Weltkarte mit Zoom (Mausrad/Buttons, 1–6×) und Pan;
+  Live-Marker aus den Server-Gamedata (10-s-Polling): Spieler (grün, mit
+  Name/Level/HP), Basen (blau, Gildenname), optional wilde Pals (max. 1500)
+  und Basis-Pals.
+- **Logs** — Aktions-Historie (Audit-Log aller Admin-Aktionen), Mod-Status
+  der Paladdon-Bridge (Version, armed, Fehler), Twitch-Troll-Pause,
+  Mod-Entschärfen-Button, Bridge-Log; im PalDefender-Modus eine RCON-Konsole.
 
 Welche Tabs/Panels sichtbar sind, richtet sich nach den konfigurierten
 Backends (Feature-Flags aus `/api/config`). Gefährliche Aktionen (Kick, Ban,
@@ -48,7 +57,9 @@ Volles Inventar meldet der Mod als Fehler pro Item zurück.
 
 Genutzte Bridge-Ops: `giveItem`, `getPos`, `teleportTo`/`teleportOffset`/`teleportToPlayer`,
 `announce`, `setGameHour`, `setHpRate`, `wildWrath`, `renamePartyPals`, `removeItem`,
-`dropRandomSlot`, `spawnPal`, `spawnCaughtPal` — plus Bridge-Status/-Logs/-Pause.
+`dropRandomSlot`, `listInventory`, `spawnPal`, `spawnCaughtPal`, `getCaughtSpecies`,
+`listBases`, `getWorldTime`, `despawnWildPals`, `disarm` (die letzten fünf ab
+Mod 0.9.33) — plus Bridge-Status/-Logs/-Pause.
 
 > **Server-Tab auf dem palchaos-Server:** Der REST-API-Port 8212 ist dort bewusst
 > nicht published (Reverse-Proxy würde ihn exponieren). Stattdessen den
