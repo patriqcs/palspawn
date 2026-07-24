@@ -95,6 +95,8 @@ In Unraid: **Docker → Add Container**
 | `GIVE_COMMAND_TEMPLATE` | nein | `give {userId} {itemId} {amount}` | Befehls-Template, falls abweichend |
 | `BANLIST_FILE` | nein | – | Pfad zur `banlist.txt` des Servers (read-only mounten, z. B. SaveGames-Ordner → `/palsaves`); schaltet die Bann-Auswahl beim Entbannen frei |
 | `DATA_DIR` | nein | `./data` | Persistente Daten (gemerkte Spielernamen zu Banns) — als Volume mounten, z. B. `/data` |
+| `SETTINGS_INI` | nein | – | Pfad zur `PalWorldSettings.ini` (rw mounten); schaltet den Settings-Editor im Server-Tab frei. Änderungen greifen erst nach Server-Neustart. `AdminPassword`/`ServerPassword`/`RESTAPIEnabled`/`RESTAPIPort` sind nie editierbar |
+| `SETTINGS_LOCKED_KEYS` | nein | ServerName, ServerPlayerMaxNum, RCONEnabled, CrossplayPlatforms, PublicPort | Keys, die der Server-Container beim Start aus ENV überschreibt — in der UI gesperrt (🔒) |
 | `APP_USER` / `APP_PASS` | nein | – | Wenn gesetzt: Basic-Auth-Login vor der Web-UI |
 | `PORT` | nein | `8080` | HTTP-Port der Web-UI |
 
