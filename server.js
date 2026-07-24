@@ -274,13 +274,24 @@ app.get('/api/players', async (req, res) => {
       const status = await bridgeFetch('/api/status');
       const mod = status.mod || {};
       const modStatus = mod.status || {};
+      // Plattform-IDs (steam_<id64>) für Kick/Ban: der Mod liefert sie meist
+      // NICHT (Reflection gibt nur lokale IDs/Guids her) — die offizielle
+      // REST API kennt sie aber. Wenn konfiguriert, dort nachschlagen und
+      // per Spielername zuordnen.
+      const restByName = new Map();
+      if (SERVER_ADMIN) {
+        try {
+          const rest = await palApi('/players');
+          for (const rp of rest.players || []) {
+            if (rp.name && rp.userId) restByName.set(rp.name, rp);
+          }
+        } catch { /* REST optional — dann bleiben Kick/Ban deaktiviert */ }
+      }
       const players = (modStatus.players || []).map((p) => {
         const ids = p.ids || {};
-        // Die REST API (Kick/Ban) erwartet die Steam-ID (steam_<id64>); der
-        // Mod liefert sie als einen der Reflection-ID-Werte mit.
         const steamId = Object.values(ids).find(
           (v) => typeof v === 'string' && /^steam_[A-Za-z0-9]+$/i.test(v),
-        ) || null;
+        ) || restByName.get(p.name)?.userId || null;
         // Beste uid wählen: Versagt die Guid-Reflection im Mod, ist p.uid ein
         // "UScriptStruct: <adresse>"-Dump — die Adresse ändert sich pro
         // Enumeration und taugt nicht als Target. Die PlayerUId-Guid zuerst:
