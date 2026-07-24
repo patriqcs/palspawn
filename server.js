@@ -292,13 +292,7 @@ app.get('/api/players', async (req, res) => {
         const steamId = Object.values(ids).find(
           (v) => typeof v === 'string' && /^steam_[A-Za-z0-9]+$/i.test(v),
         ) || restByName.get(p.name)?.userId || null;
-        // Beste uid wählen: Versagt die Guid-Reflection im Mod, ist p.uid ein
-        // "UScriptStruct: <adresse>"-Dump — die Adresse ändert sich pro
-        // Enumeration und taugt nicht als Target. Die PlayerUId-Guid zuerst:
-        // sie ist kollisionsfrei, während kurze PlayerIds ("256") beim
-        // Teilstring-Match des Mods andere Spieler treffen könnten.
-        const clean = (v) => typeof v === 'string' && v && !/^UScriptStruct/i.test(v) && !v.includes(' ');
-        const userId = [ids.PlayerUId, p.uid, ids.PlayerId, ...Object.values(ids)].find(clean) || p.uid;
+        const userId = bestUid(p);
         return {
           name: p.name,
           userId,
@@ -460,6 +454,19 @@ function requireBridge(res) {
 // Auch Mod-Fallback-uids ("UScriptStruct: 0000…", mit Leerzeichen/Doppelpunkt)
 // zulassen — die Bridge matcht exakt oder per Teilstring; Zeichensatz bleibt eng.
 const UID_RE = /^[A-Za-z0-9_][A-Za-z0-9_: .-]{0,63}$/;
+
+// Bester Target-Kandidat aus den Mod-ids: keine Reflection-Dumps, keine
+// Null-Guids (die neue Welt vergibt PlayerUId=0 für alle — als Target würde
+// sie beim Exakt-Match den erstbesten Spieler treffen).
+const cleanUid = (v) => typeof v === 'string' && v
+  && !/^UScriptStruct/i.test(v)
+  && !v.includes(' ')
+  && !/^0{8}-0{8}-0{8}-0{8}$/.test(v);
+
+function bestUid(p) {
+  const ids = p.ids || {};
+  return [ids.PlayerUId, p.uid, ids.PlayerId, ...Object.values(ids)].find(cleanUid) || p.uid;
+}
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 app.post('/api/pos', async (req, res) => {
@@ -626,11 +633,9 @@ app.get('/api/server/gamedata', async (req, res) => {
     try {
       const status = await bridgeFetch('/api/status');
       const players = status.mod?.status?.players || [];
-      const clean = (v) => typeof v === 'string' && v && !/^UScriptStruct/i.test(v) && !v.includes(' ');
       for (const p of players) {
         if (!p.pos || typeof p.pos.x !== 'number') continue;
-        const ids = p.ids || {};
-        const userId = [ids.PlayerUId, p.uid, ids.PlayerId, ...Object.values(ids)].find(clean) || p.uid;
+        const userId = bestUid(p);
         actors.push({
           Type: 'Character',
           UnitType: 'Player',
@@ -1156,10 +1161,18 @@ app.post('/api/bridge/op', async (req, res) => {
   const spec = BRIDGE_OPS[body.op];
   if (!spec) return res.status(400).json({ error: `Unbekannte Operation: ${body.op}` });
   let target;
-  // 'none' = globale Op: NIE ein Target anhängen — eine veraltete
-  // Spielerauswahl (uids sind sitzungsgebunden) würde sonst den ganzen
-  // Batch mit "Spieler nicht gefunden" scheitern lassen.
-  if (spec.target !== 'none' && typeof body.userId === 'string' && UID_RE.test(body.userId)) {
+  // 'none' = globale Op: die (ggf. veraltete, sitzungsgebundene) UI-Auswahl
+  // ignorieren. Ganz OHNE Target geht es aber auch nicht — die Bridge setzt
+  // bei fehlendem Target ihren cfg.target-Default ein (Twitch-Troll-Erbe),
+  // der veraltet sein kann. Deshalb: frisches Target vom ersten Online-
+  // Spieler anhängen (die Ops ignorieren ctx.target ohnehin).
+  if (spec.target === 'none') {
+    try {
+      const status = await bridgeFetch('/api/status');
+      const pl = (status.mod?.status?.players || [])[0];
+      if (pl) target = { uid: bestUid(pl) };
+    } catch { /* ohne Target versuchen */ }
+  } else if (typeof body.userId === 'string' && UID_RE.test(body.userId)) {
     target = { uid: body.userId };
   } else if (spec.target === 'required') {
     return res.status(400).json({ error: 'Ungültige userId' });
