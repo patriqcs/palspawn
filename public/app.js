@@ -33,6 +33,8 @@ const state = {
   // Audit-Log
   auditTimer: null,
   lastAuditErr: null,
+  // Sitzungsprotokoll (Status-Leiste unten + Logs-Tab)
+  logEntries: [],      // [{ts, text, cls}], neueste zuerst, Cap 60
 };
 
 const els = {
@@ -50,13 +52,20 @@ const els = {
   count: $('#result-count'),
   // Cart-Sidebar
   cartItems: $('#cart-items'),
-  cartPlayer: $('#cart-player'),
+  cartCtx: $('#cart-ctx'),
   clearCart: $('#clear-cart'),
   spawn: $('#spawn'),
-  log: $('#log'),
+  itemsTabBadge: $('#items-tab-badge'),
+  cartFab: $('#cart-fab'),
+  // Status-Leiste (globales Sitzungsprotokoll)
+  statusBar: $('#status-bar'),
+  statusMsg: $('#status-msg'),
+  statusCaret: $('#status-caret'),
+  statusDrawer: $('#status-drawer'),
+  sessionLog: $('#session-log'),
   // Spieler-Tab
   playersBox: $('#players-box'),
-  unbanRow: $('#unban-row'),
+  unbanCard: $('#unban-card'),
   unbanSelect: $('#unban-select'),
   unbanRefresh: $('#unban-refresh'),
   unbanId: $('#unban-id'),
@@ -111,6 +120,7 @@ const els = {
   ghNight: $('#gh-night'),
   wtInfo: $('#wt-info'),
   wtRefresh: $('#wt-refresh'),
+  worldtimeCard: $('#worldtime-card'),
   wwRadius: $('#ww-radius'),
   wwMax: $('#ww-max'),
   wwBtn: $('#ww-btn'),
@@ -193,12 +203,58 @@ const CATEGORY_LABELS = {
 // Helfer
 // ---------------------------------------------------------------------------
 
+// Sitzungsprotokoll: schreibt in state.logEntries (Cap 60, neueste zuerst)
+// und aktualisiert Status-Leiste, Drawer (falls offen) und Logs-Tab-Card.
 function logLine(text, cls = 'info') {
-  const div = document.createElement('div');
-  div.className = cls;
-  div.textContent = text;
-  els.log.prepend(div);
-  while (els.log.children.length > 60) els.log.lastChild.remove();
+  const ts = new Date().toLocaleTimeString('de-DE');
+  state.logEntries.unshift({ ts, text, cls });
+  while (state.logEntries.length > 60) state.logEntries.pop();
+  renderStatusBar();
+  if (!els.statusDrawer.hidden) renderStatusDrawer();
+  renderSessionLog();
+}
+
+function renderStatusBar() {
+  const e = state.logEntries[0];
+  if (!e) {
+    els.statusMsg.className = 'info';
+    els.statusMsg.textContent = 'Noch keine Meldungen.';
+    return;
+  }
+  els.statusMsg.className = e.cls;
+  els.statusMsg.textContent = `${e.ts} · ${e.text}`;
+}
+
+function logEntriesFragment() {
+  const frag = document.createDocumentFragment();
+  for (const e of state.logEntries) {
+    const div = document.createElement('div');
+    div.className = e.cls;
+    div.textContent = `${e.ts} ${e.text}`;
+    frag.appendChild(div);
+  }
+  return frag;
+}
+
+function renderStatusDrawer() {
+  els.statusDrawer.replaceChildren(logEntriesFragment());
+}
+
+function renderSessionLog() {
+  if (state.logEntries.length) {
+    els.sessionLog.replaceChildren(logEntriesFragment());
+  } else {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Noch keine Meldungen in dieser Sitzung.';
+    els.sessionLog.replaceChildren(p);
+  }
+}
+
+function toggleStatusDrawer() {
+  els.statusDrawer.hidden = !els.statusDrawer.hidden;
+  els.statusCaret.textContent = els.statusDrawer.hidden ? '▴' : '▾';
+  if (!els.statusDrawer.hidden) renderStatusDrawer();
 }
 
 async function apiGet(path) {
@@ -280,7 +336,9 @@ function applyFeatures() {
   }
   els.teleport.hidden = !f.teleport;
   els.charActions.hidden = !f.palOps;
-  els.unbanRow.hidden = !f.serverAdmin;
+  // Weltzeit-Card lebt im Server-Tab, braucht aber die Bridge (palOps)
+  els.worldtimeCard.hidden = !f.palOps;
+  els.unbanCard.hidden = !f.serverAdmin;
   els.unbanSelect.hidden = !f.banlist;
   els.unbanRefresh.hidden = !f.banlist;
   els.settingsHint.hidden = !f.settingsEdit;
@@ -291,6 +349,7 @@ function applyFeatures() {
 function setTab(tab) {
   if (!tabAvailable(tab)) tab = 'items';
   state.activeTab = tab;
+  document.body.dataset.tab = tab;
   localStorage.setItem(TAB_KEY, tab);
   for (const btn of els.tabs.querySelectorAll('.tab')) {
     btn.classList.toggle('active', btn.dataset.tab === tab);
@@ -303,13 +362,13 @@ function setTab(tab) {
   stopLogsPolling();
   stopMapPolling();
   if (tab === 'server') startServerPolling();
-  if (tab === 'logs') startLogsPolling();
+  if (tab === 'logs') {
+    startLogsPolling();
+    renderSessionLog();
+  }
   if (tab === 'map') startMapPolling();
   if (tab === 'players') loadBanlist();
-  if (tab === 'pals') {
-    loadPals();
-    refreshWorldTime();
-  }
+  if (tab === 'pals') loadPals();
 }
 
 async function loadConfig() {
@@ -482,18 +541,69 @@ function renderCart() {
     frag.appendChild(row);
   }
   els.cartItems.replaceChildren(frag);
+  // Zähler-Badge am Items-Tab + Mobile-FAB (Sichtbarkeit <900px regelt CSS)
+  els.itemsTabBadge.textContent = String(state.cart.size);
+  els.itemsTabBadge.hidden = !state.cart.size;
+  els.cartFab.textContent = `🛒 ${state.cart.size}`;
+  els.cartFab.hidden = !state.cart.size;
   updateSpawnButton();
 }
 
 function updateSpawnButton() {
-  els.spawn.disabled = !state.cart.size || !els.playerSelect.value;
+  const hasPlayer = !!els.playerSelect.value;
+  els.spawn.disabled = !state.cart.size || !hasPlayer;
+  els.spawn.title = hasPlayer ? '' : 'Zuerst oben einen Spieler auswählen';
+}
+
+// ---------------------------------------------------------------------------
+// Spieler-Kontext (eine Auswahl, überall sichtbar)
+// ---------------------------------------------------------------------------
+
+// Aktualisiert Cart-Chip + alle Karten-Chips und (de)aktiviert alle
+// spielerbezogenen Buttons. Die requirePlayer()-Meldungen bleiben als Fallback.
+function updatePlayerContext() {
+  const userId = els.playerSelect.value;
+  const p = state.players.find((x) => x.userId === userId);
+  const name = p ? playerLabel(p) : userId;
+
+  if (userId) {
+    els.cartCtx.textContent = (p && p.level != null)
+      ? `Spawnen an: ${name} (Lv ${p.level})`
+      : `Spawnen an: ${name}`;
+    els.cartCtx.classList.remove('warn');
+  } else {
+    els.cartCtx.textContent = 'Spawnen an: – kein Spieler gewählt –';
+    els.cartCtx.classList.add('warn');
+  }
+
+  for (const chip of document.querySelectorAll('.ctx-chip[data-ctx="player"]')) {
+    chip.textContent = userId ? `Wirkt auf: ${name}` : 'Kein Spieler gewählt';
+    chip.classList.toggle('warn', !userId);
+  }
+
+  const btns = [
+    els.tpGetpos, els.tpGo, els.tpToplayer, els.tpTobase,
+    els.hpSet, els.rnApply, els.rnReset, els.riBtn, els.invLoad, els.dropBtn,
+    els.spBtn, els.scBtn, els.csBtn, els.wwBtn, els.dwBtn,
+  ];
+  for (const b of btns) {
+    b.disabled = !userId;
+    b.title = userId ? '' : 'Zuerst oben einen Spieler auswählen';
+  }
+  updateSpawnButton();
+}
+
+// Globale Auswahl programmatisch setzen (Spieler-Tabelle, Karte)
+function setGlobalPlayer(userId) {
+  els.playerSelect.value = userId;
+  onPlayerChange();
 }
 
 // ---------------------------------------------------------------------------
 // Spieler
 // ---------------------------------------------------------------------------
 
-// Header- und Cart-Dropdown zeigen dieselbe Spielerliste und bleiben synchron.
+// Befüllt das globale Header-Dropdown mit der Spielerliste.
 function fillPlayerSelect(sel) {
   const prev = sel.value;
   sel.replaceChildren();
@@ -526,7 +636,6 @@ async function loadPlayers() {
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
     state.players = data.players;
     fillPlayerSelect(els.playerSelect);
-    fillPlayerSelect(els.cartPlayer);
     if (data.modAlive === false) {
       els.serverStatus.textContent = 'Mod offline!';
       els.serverStatus.className = 'status err';
@@ -538,17 +647,15 @@ async function loadPlayers() {
       els.serverStatus.className = 'status ok';
     }
   } catch (err) {
-    for (const sel of [els.playerSelect, els.cartPlayer]) {
-      sel.replaceChildren();
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '– Server nicht erreichbar –';
-      sel.appendChild(opt);
-    }
+    els.playerSelect.replaceChildren();
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '– Server nicht erreichbar –';
+    els.playerSelect.appendChild(opt);
     els.serverStatus.textContent = err.message;
     els.serverStatus.className = 'status err';
   }
-  updateSpawnButton();
+  updatePlayerContext();
   renderTpPlayers();
   renderPlayersTable();
 }
@@ -603,6 +710,8 @@ function renderPlayersTable() {
   const tbody = document.createElement('tbody');
   for (const p of state.players) {
     const tr = document.createElement('tr');
+    const isActive = !!p.userId && p.userId === els.playerSelect.value;
+    if (isActive) tr.classList.add('active-row');
     const td = (text) => {
       const cell = document.createElement('td');
       cell.textContent = text;
@@ -634,13 +743,16 @@ function renderPlayersTable() {
     actions.className = 'row-actions';
     const sel = document.createElement('button');
     sel.type = 'button';
-    sel.textContent = 'Auswählen';
-    sel.addEventListener('click', () => {
-      els.playerSelect.value = p.userId;
-      updateSpawnButton();
-      renderTpPlayers();
-      logLine(`Spieler ${playerLabel(p)} ausgewählt.`, 'info');
-    });
+    if (isActive) {
+      sel.textContent = '✓ Gewählt';
+      sel.disabled = true;
+    } else {
+      sel.textContent = 'Auswählen';
+      sel.addEventListener('click', () => {
+        setGlobalPlayer(p.userId); // rendert die Tabelle via onPlayerChange neu
+        logLine(`Spieler ${playerLabel(p)} ausgewählt.`, 'info');
+      });
+    }
     actions.appendChild(sel);
     if (state.features.serverAdmin) {
       for (const [action, label] of [['kick', 'Kick'], ['ban', 'Bannen']]) {
@@ -670,7 +782,8 @@ async function kickBan(action, p, pid) {
   const verb = action === 'kick' ? 'kicken' : 'bannen';
   const message = window.prompt(`Grund (optional) – ${playerLabel(p)} ${verb}:`, '');
   if (message === null) return; // abgebrochen
-  if (!window.confirm(`${playerLabel(p)} wirklich ${verb}?`)) return;
+  // Kick: Grund-Prompt genügt; nur Ban braucht die zusätzliche Bestätigung
+  if (action === 'ban' && !window.confirm(`${playerLabel(p)} wirklich bannen?`)) return;
   try {
     await apiPost(`api/server/${action}`, {
       userId: pid,
@@ -1348,6 +1461,7 @@ function settingEditor(td, key, raw) {
   cancel.title = 'Abbrechen';
   cancel.addEventListener('click', () => renderSettings());
   save.addEventListener('click', async () => {
+    if (!window.confirm(`${key} auf „${input.value}" ändern? Wirksam erst nach Server-Neustart.`)) return;
     save.disabled = true;
     try {
       const resp = await apiPost('api/server/settings-file', { key, value: input.value });
@@ -1504,6 +1618,8 @@ function startServerPolling() {
   if (!state.features.serverAdmin) return;
   loadServerInfo();
   loadSettings();
+  // Weltzeit-Card (Tag/Nacht) einmalig beim Öffnen aktualisieren — braucht die Bridge
+  if (state.features.palOps) refreshWorldTime();
   serverTick();
   state.serverTimer = setInterval(serverTick, 10000);
 }
@@ -1614,8 +1730,31 @@ function mapZoomReset() {
   applyMapTransform();
 }
 
-// Marker aus den gecachten Gamedata rendern. Performant: ein DocumentFragment,
-// keine Event-Listener pro Marker (title-Attribut reicht als Tooltip).
+// Klick auf einen Spieler-Marker: Spieler per Name in state.players suchen
+// und als globale Auswahl setzen
+function mapSelectPlayer(nickName) {
+  const p = state.players.find((x) => x.name === nickName || playerLabel(x) === nickName);
+  if (!p || !p.userId) {
+    return logLine(`Karte: „${nickName || '?'}" nicht in der Spielerliste gefunden — Spielerliste aktualisieren.`, 'err');
+  }
+  setGlobalPlayer(p.userId);
+  logLine(`Spieler ${playerLabel(p)} ausgewählt (Karte).`, 'info');
+}
+
+// Klick auf einen Basis-Marker: gewählten Spieler dorthin teleportieren
+// (z+150 als Sicherheitsabstand — LocationZ liefert der Server auch im Fallback)
+async function mapTeleportToBase(a) {
+  const userId = els.playerSelect.value;
+  if (!userId) return logLine('Karte: Zuerst oben einen Spieler auswählen.', 'err');
+  const x = Math.round(a.LocationX), y = Math.round(a.LocationY);
+  if (!window.confirm(`${selectedPlayerName()} zur Basis teleportieren? (${x}/${y})`)) return;
+  await tpApi('api/teleport',
+    { userId, mode: 'to', x: a.LocationX, y: a.LocationY, z: (typeof a.LocationZ === 'number' ? a.LocationZ : 0) + 150 },
+    `Teleportiert zur Basis (${x}/${y}).`);
+}
+
+// Marker aus den gecachten Gamedata rendern. Performant: ein DocumentFragment;
+// nur Spieler-/Basis-Marker sind klickbar, Wild-/Camp-Pals bleiben title-only.
 function renderMapMarkers() {
   const d = state.mapData;
   const frag = document.createDocumentFragment();
@@ -1631,14 +1770,18 @@ function renderMapMarkers() {
 
     let el = null;
     if (a.Type === 'PalBox') {
-      el = document.createElement('div');
+      el = document.createElement('button');
+      el.type = 'button';
       el.className = 'mk mk-base';
-      el.title = a.GuildName ? `Basis: ${a.GuildName}` : 'Basis';
+      el.title = (a.GuildName ? `Basis: ${a.GuildName}` : 'Basis') + ' — Klick: gewählten Spieler herteleportieren';
+      el.addEventListener('click', () => mapTeleportToBase(a));
     } else if (a.UnitType === 'Player') {
-      el = document.createElement('div');
+      el = document.createElement('button');
+      el.type = 'button';
       el.className = 'mk mk-player';
       const hp = (typeof a.HP === 'number' && typeof a.MaxHP === 'number') ? ` · HP ${a.HP}/${a.MaxHP}` : '';
-      el.title = `${a.NickName || 'Spieler'} · Level ${a.level ?? '?'}${hp}`;
+      el.title = `${a.NickName || 'Spieler'} · Level ${a.level ?? '?'}${hp} — Klick: auswählen`;
+      el.addEventListener('click', () => mapSelectPlayer(a.NickName || ''));
       const label = document.createElement('span');
       label.className = 'mk-label';
       label.textContent = a.NickName || '';
@@ -1854,7 +1997,10 @@ function startLogsPolling() {
     state.logsTimer = setInterval(logsTick, 5000);
   }
   loadAudit();
-  state.auditTimer = setInterval(loadAudit, 10000);
+  state.auditTimer = setInterval(() => {
+    loadAudit();
+    renderSessionLog(); // Sitzungsprotokoll-Card beim Polling-Tick mitaktualisieren
+  }, 10000);
 }
 
 function stopLogsPolling() {
@@ -1962,18 +2108,41 @@ els.clearCart.addEventListener('click', () => {
   render();
 });
 els.refreshPlayers.addEventListener('click', loadPlayers);
-// Header- und Cart-Auswahl synchron halten; Wechsel invalidiert die Inventaranzeige
-function onPlayerChange(source) {
-  const other = source === els.playerSelect ? els.cartPlayer : els.playerSelect;
-  if ([...other.options].some((o) => o.value === source.value)) other.value = source.value;
-  updateSpawnButton();
+// Auswahlwechsel: Kontext-Chips/Buttons aktualisieren, Inventaranzeige invalidieren
+function onPlayerChange() {
+  updatePlayerContext();
   renderTpPlayers();
+  renderPlayersTable();
   els.invBox.hidden = true;
   els.invBox.replaceChildren();
 }
-els.playerSelect.addEventListener('change', () => onPlayerChange(els.playerSelect));
-els.cartPlayer.addEventListener('change', () => onPlayerChange(els.cartPlayer));
+els.playerSelect.addEventListener('change', onPlayerChange);
 els.spawn.addEventListener('click', spawn);
+// Kontext-Chip im Warenkorb: führt zur globalen Spielerauswahl im Header
+els.cartCtx.addEventListener('click', () => {
+  if (window.innerWidth < 900) els.playerSelect.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  els.playerSelect.focus();
+});
+// Mobile-FAB: zum Warenkorb scrollen
+els.cartFab.addEventListener('click', () => {
+  $('#cart').scrollIntoView({ behavior: 'smooth' });
+});
+
+// Status-Leiste: Klick klappt das Sitzungsprotokoll auf/zu
+els.statusBar.addEventListener('click', toggleStatusDrawer);
+
+// Enter-Submit für einzeilige Formulare
+function enterSubmit(input, fn) {
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') fn(); });
+}
+enterSubmit(els.unbanId, unban);
+enterSubmit(els.riId, removeItem);
+enterSubmit(els.riCount, removeItem);
+enterSubmit(els.tpX, tpGo);
+enterSubmit(els.tpY, tpGo);
+enterSubmit(els.tpZ, tpGo);
+enterSubmit(els.spPalid, spawnPal);
+enterSubmit(els.rsMin, () => { if (!els.rsPlan.disabled) planRestart(); });
 
 // Teleport
 els.tpGetpos.addEventListener('click', tpGetPos);
@@ -2047,6 +2216,8 @@ els.mapZoomOut.addEventListener('click', () => {
 els.mapZoomReset.addEventListener('click', mapZoomReset);
 let mapDrag = null;
 els.mapViewport.addEventListener('pointerdown', (e) => {
+  // Kein Drag-Start auf klickbaren Markern — setPointerCapture würde deren click schlucken
+  if (e.target.closest('button.mk')) return;
   mapDrag = { x: e.clientX, y: e.clientY };
   els.mapViewport.setPointerCapture(e.pointerId);
   els.mapViewport.classList.add('dragging');
@@ -2088,6 +2259,9 @@ for (let h = 0; h < 24; h++) {
 }
 els.ghHour.value = '9';
 
+updatePlayerContext();
+renderStatusBar();
+renderSessionLog();
 loadItems();
 renderSpots();
 loadConfig().then(loadPlayers);

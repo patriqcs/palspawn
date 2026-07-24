@@ -589,7 +589,7 @@ app.get('/api/server/gamedata', async (req, res) => {
         });
       }
       for (const b of await bridgeBases()) {
-        actors.push({ Type: 'PalBox', GuildName: '', LocationX: b.x, LocationY: b.y });
+        actors.push({ Type: 'PalBox', GuildName: '', LocationX: b.x, LocationY: b.y, LocationZ: b.z });
       }
     } else {
       const data = await palApi('/players');

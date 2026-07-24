@@ -14,7 +14,9 @@
   --danger: oklch(0.7 0.18 25);
   --radius: 8px;
   --z-sticky: 10;
+  --z-status: calc(var(--z-sticky) + 2); /* Status-Leiste/Drawer über sticky Tabs */
   --tabs-h: 2.85rem; /* Höhe der sticky Tab-Leiste (Offset für Toolbar/Cart) */
+  --statusbar-h: 2.2rem; /* Höhe der fixen Status-Leiste unten */
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 16px;
 }
@@ -25,6 +27,7 @@
 
 body {
   margin: 0;
+  padding-bottom: var(--statusbar-h); /* nichts hinter der fixen Status-Leiste verstecken */
   background: var(--bg);
   color: var(--ink);
   font-family: system-ui, "Segoe UI", Inter, Roboto, sans-serif;
@@ -85,6 +88,20 @@ header {
 }
 .tab:hover:not(:disabled) { background: none; color: var(--ink); }
 .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+.tab-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0 0.4rem;
+  min-width: 1.15rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: center;
+}
 
 /* ---------- toolbar (Items-Tab) ---------- */
 
@@ -171,10 +188,13 @@ button.danger:hover:not(:disabled) {
 
 main {
   display: grid;
-  grid-template-columns: 1fr 21rem;
+  grid-template-columns: 1fr;
   gap: 0;
   align-items: start;
 }
+/* Warenkorb-Spalte nur im Items-Tab */
+body[data-tab="items"] main { grid-template-columns: 1fr 21rem; }
+body:not([data-tab="items"]) #cart { display: none; }
 
 .panels { min-width: 0; }
 
@@ -195,6 +215,7 @@ main {
 .card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; font-weight: 650; }
 .card h3.spaced { margin-top: 0.9rem; }
 .card p { margin: 0 0 0.5rem; }
+.card-sep { border: none; border-top: 1px solid var(--border); margin: 0.85rem 0 0.35rem; }
 
 .form-row {
   display: flex;
@@ -235,6 +256,9 @@ td.copy {
   font-size: 0.78rem;
 }
 td.copy:hover { color: var(--accent); }
+
+/* Zeile des global gewählten Spielers */
+table.data tr.active-row td { background: oklch(0.79 0.13 65 / 0.09); }
 
 .row-actions { display: flex; gap: 0.3rem; }
 .row-actions button { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
@@ -366,7 +390,7 @@ td.copy:hover { color: var(--accent); }
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  max-height: calc(100vh - var(--tabs-h));
+  max-height: calc(100vh - var(--tabs-h) - var(--statusbar-h));
   padding: 0.9rem 1.1rem;
   border-left: 1px solid var(--border);
   background: var(--surface);
@@ -409,16 +433,42 @@ td.copy:hover { color: var(--accent); }
 }
 .cart-row .rm:hover { color: var(--danger); background: none; }
 
-.cart-player {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-.cart-player select { flex: 1; min-width: 0; }
-
 .cart-footer { display: flex; gap: 0.5rem; }
+
+/* Mobile-FAB: springt im Items-Tab zum Warenkorb (nur <900px sichtbar) */
+#cart-fab {
+  display: none;
+  position: fixed;
+  right: 1rem;
+  bottom: calc(var(--statusbar-h) + 0.8rem);
+  z-index: var(--z-status);
+  padding: 0.55rem 0.95rem;
+  border-radius: 999px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 2px 10px oklch(0 0 0 / 0.45);
+}
+
+/* ---------- kontext-chips (globale spielerauswahl) ---------- */
+
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  margin: 0 0 0.5rem;
+  padding: 0.12rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+.ctx-chip.warn { color: var(--accent); border-color: oklch(0.6 0.11 80); }
+button.ctx-chip { cursor: pointer; }
+button.ctx-chip:hover:not(:disabled) { background: var(--border); color: var(--ink); }
 
 /* ---------- teleport ---------- */
 
@@ -539,6 +589,10 @@ td.copy:hover { color: var(--accent); }
 .map-markers { position: absolute; inset: 0; }
 
 .mk { position: absolute; transform: translate(-50%, -50%); }
+/* Klickbare Marker (Spieler/Basis) sind Buttons — Standard-Button-Optik neutralisieren */
+button.mk { padding: 0; display: block; cursor: pointer; transition: none; }
+button.mk-player:hover:not(:disabled) { background: var(--mk-player); outline: 2px solid oklch(1 0 0 / 0.5); }
+button.mk-base:hover:not(:disabled) { background: var(--mk-base); outline: 2px solid oklch(1 0 0 / 0.5); }
 .mk-player {
   width: 10px;
   height: 10px;
@@ -611,30 +665,68 @@ td.copy:hover { color: var(--accent); }
   overflow-wrap: anywhere;
 }
 
-/* ---------- result log ---------- */
+/* ---------- status-leiste + sitzungsprotokoll ---------- */
 
-.log {
-  font-size: 0.8rem;
-  overflow-y: auto;
-  max-height: 11rem;
+#status-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-status);
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  align-items: center;
+  gap: 0.6rem;
+  height: var(--statusbar-h);
+  padding: 0 1.25rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+  cursor: pointer;
+  user-select: none;
 }
-.log .ok { color: var(--success); }
-.log .err { color: var(--danger); }
-.log .info { color: var(--muted); }
+#status-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#status-caret { flex: none; color: var(--muted); }
+#status-bar:hover #status-caret { color: var(--ink); }
+
+#status-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--statusbar-h);
+  z-index: var(--z-status);
+  max-height: 40vh;
+  overflow-y: auto;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+}
+
+#session-log { max-height: 22rem; }
+
+#status-msg.ok, #status-drawer .ok, #session-log .ok { color: var(--success); }
+#status-msg.err, #status-drawer .err, #session-log .err { color: var(--danger); }
+#status-msg.info, #status-drawer .info, #session-log .info { color: var(--muted); }
 
 /* ---------- responsive ---------- */
 
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; }
+  /* Warenkorb stapelt unter dem Grid (nur im Items-Tab relevant) */
+  body[data-tab="items"] main { grid-template-columns: 1fr; }
   #cart {
     position: static;
     max-height: none;
     border-left: none;
     border-top: 1px solid var(--border);
   }
+  /* FAB nur auf schmalen Viewports im Items-Tab, wenn der Korb nicht leer ist */
+  body[data-tab="items"] #cart-fab:not([hidden]) { display: block; }
   .grid { padding: 0.75rem; }
   .panel-inner { padding: 0.75rem; }
 }

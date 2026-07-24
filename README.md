@@ -11,24 +11,36 @@ Web-Admin-Tool für Palworld-Server mit Tab-Oberfläche:
   Items entfernen, Zufalls-Drop.
 - **Pals** — Wild-Pals spawnen (ID mit Autovervollständigung aus 299 Pals +
   Icon-Vorschau, Anzahl, Level, Despawn-Timer), gefangene Pals des Spielers
-  spawnen oder als Arten-Übersicht anzeigen, Weltzeit setzen (inkl.
-  Tag/Nacht-Anzeige), WildWrath, wilde Pals im Umkreis entfernen.
+  spawnen oder als Arten-Übersicht anzeigen, WildWrath, wilde Pals im
+  Umkreis entfernen.
 - **Server** — Dashboard (FPS mit Sparkline, Frametime, Spieler, Uptime,
-  Ingame-Tage, Basen), Ankündigungen, Welt speichern, Shutdown mit Countdown,
-  Force-Stop, geplanter Neustart (1–120 min, automatische In-Game-Ansagen,
-  Countdown, abbrechbar), alle Server-Settings durchsuchbar (editierbar via
-  ini, sonst read-only).
+  Ingame-Tage, Basen), Weltzeit setzen (inkl. Tag/Nacht-Anzeige, braucht die
+  Bridge), Aktionen (Welt speichern, Ankündigung), Neustart & Stopp
+  (geplanter Neustart 1–120 min mit automatischen In-Game-Ansagen, Countdown
+  und Abbrechen; Sofort-Shutdown mit Wartezeit; Force-Stop), alle
+  Server-Settings durchsuchbar (editierbar via ini, sonst read-only).
 - **Karte** — 4096²-Weltkarte mit Zoom (Mausrad/Buttons, 1–6×) und Pan;
   Live-Marker aus den Server-Gamedata (10-s-Polling): Spieler (grün, mit
-  Name/Level/HP), Basen (blau, Gildenname), optional wilde Pals (max. 1500)
-  und Basis-Pals.
-- **Logs** — Aktions-Historie (Audit-Log aller Admin-Aktionen), Mod-Status
-  der Paladdon-Bridge (Version, armed, Fehler), Twitch-Troll-Pause,
-  Mod-Entschärfen-Button, Bridge-Log; im PalDefender-Modus eine RCON-Konsole.
+  Name/Level/HP; Klick wählt den Spieler global aus), Basen (blau,
+  Gildenname; Klick teleportiert den gewählten Spieler dorthin), optional
+  wilde Pals (max. 1500) und Basis-Pals.
+- **Logs** — Aktions-Historie (Audit-Log aller Admin-Aktionen),
+  Sitzungsprotokoll dieses Browsers, Mod-Status der Paladdon-Bridge
+  (Version, armed, Fehler), Twitch-Troll-Pause, Mod-Entschärfen-Button,
+  Bridge-Log; im PalDefender-Modus eine RCON-Konsole.
+
+Der Item-Warenkorb lebt als Sidebar im Items-Tab (Zähler-Badge am Tab-Button,
+auf Mobil ein Floating-Button zum Korb). Die globale Spielerauswahl sitzt in
+der Kopfzeile; jede spielerbezogene Card zeigt einen Kontext-Chip
+(„Wirkt auf: …") und deaktiviert ihre Buttons ohne Auswahl. Meldungen laufen
+in eine fixe Status-Leiste am unteren Rand (Klick klappt die letzten
+60 Einträge auf).
 
 Welche Tabs/Panels sichtbar sind, richtet sich nach den konfigurierten
-Backends (Feature-Flags aus `/api/config`). Gefährliche Aktionen (Kick, Ban,
-Shutdown, Force-Stop, Item entfernen, WildWrath) fragen immer nach Bestätigung.
+Backends (Feature-Flags aus `/api/config`). Gefährliche Aktionen (Ban,
+Shutdown, Force-Stop, Neustart planen, Item entfernen, Zufalls-Drop,
+WildWrath, Wilde entfernen, Settings-Änderung) fragen nach Bestätigung;
+Kick fragt nur nach dem Grund (Abbrechen des Prompts bricht ab).
 
 Items inkl. Icons sind ins Image gebundelt (keine Internetverbindung zur Laufzeit nötig).
 

@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
-<body>
+<body data-tab="items">
 <header>
   <div class="brand">
     <img src="icons/T_itemicon_PalSphere.webp" alt="" width="28" height="28">
@@ -22,7 +22,7 @@
 </header>
 
 <nav id="tabs" class="tabs" aria-label="Bereiche">
-  <button type="button" class="tab active" data-tab="items">Items</button>
+  <button type="button" class="tab active" data-tab="items">Items<span id="items-tab-badge" class="tab-badge" hidden>0</span></button>
   <button type="button" class="tab" data-tab="players">Spieler</button>
   <button type="button" class="tab" data-tab="pals" hidden>Pals</button>
   <button type="button" class="tab" data-tab="server" hidden>Server</button>
@@ -61,18 +61,23 @@
           <div id="players-box" class="table-wrap">
             <p class="muted">Spielerliste wird geladen…</p>
           </div>
-          <div id="unban-row" class="form-row" hidden>
+        </div>
+
+        <div id="unban-card" class="card" hidden>
+          <h3>Gebannte Spieler</h3>
+          <div class="form-row">
             <label for="unban-id">Entbannen:</label>
             <select id="unban-select" hidden aria-label="Gebannte Spieler"><option value="">– gebannte Spieler –</option></select>
             <button id="unban-refresh" class="secondary" hidden title="Bann-Liste aktualisieren">&#x21bb;</button>
             <input id="unban-id" type="text" placeholder="userId (z. B. steam_7656…)">
-            <button id="unban-btn" class="secondary">Entbannen</button>
+            <button id="unban-btn">Entbannen</button>
           </div>
         </div>
 
         <details id="teleport" class="card" open hidden>
           <summary>Teleport</summary>
           <div class="tp-body">
+            <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
             <div class="tp-row">
               <button id="tp-getpos" class="secondary">Position holen</button>
               <span id="tp-pos" class="tp-pos"></span>
@@ -102,7 +107,7 @@
 
         <div id="char-actions" class="card" hidden>
           <h3>Charakter-Aktionen</h3>
-          <p class="muted small">Wirken auf den oben in der Kopfzeile gewählten Spieler.</p>
+          <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
           <div class="form-row">
             <label for="hp-range">HP setzen:</label>
             <input id="hp-range" type="range" min="1" max="100" value="100" aria-label="HP in Prozent">
@@ -140,13 +145,14 @@
 
         <div class="card">
           <h3>Wild-Pal spawnen</h3>
-          <p class="muted small">Spawnt beim gewählten Spieler. Der Spawn kann bis zu 75 Sekunden dauern.</p>
+          <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
+          <p class="muted small">Der Spawn kann bis zu 75 s dauern.</p>
           <div class="form-row">
             <input id="sp-palid" type="text" list="pal-ids" placeholder="Pal-ID (z. B. SheepBall)" autocomplete="off">
             <img id="sp-pal-icon" class="pal-preview" width="28" height="28" alt="" hidden>
             <label>Anzahl <input id="sp-count" type="number" min="1" max="10" value="1"></label>
             <label>Level <input id="sp-level" type="number" min="1" max="65" value="1"></label>
-            <label>Despawn nach <input id="sp-despawn" type="number" min="5" max="600" placeholder="Sek."></label>
+            <label>Despawn nach <input id="sp-despawn" type="number" min="5" max="600"> s</label>
             <button id="sp-btn">Spawnen</button>
           </div>
           <datalist id="pal-ids"></datalist>
@@ -154,7 +160,8 @@
 
         <div class="card">
           <h3>Gefangene Pals spawnen</h3>
-          <p class="muted small">Spawnt Kopien der gefangenen Pals des gewählten Spielers.</p>
+          <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
+          <p class="muted small">Spawnt Kopien der gefangenen Pals.</p>
           <div class="form-row">
             <label>Anzahl <input id="sc-count" type="number" min="1" max="10" value="3"></label>
             <label>Level-Offset <input id="sc-offset" type="number" min="-50" max="50" value="5"></label>
@@ -164,7 +171,7 @@
 
         <div class="card">
           <h3>Gefangene Pals</h3>
-          <p class="muted small">Zeigt die gefangenen Pal-Arten des gewählten Spielers.</p>
+          <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
           <div class="form-row">
             <button id="cs-btn">Anzeigen</button>
           </div>
@@ -172,28 +179,15 @@
         </div>
 
         <div class="card">
-          <h3>Weltzeit</h3>
-          <div class="form-row">
-            <select id="gh-hour" aria-label="Stunde wählen"></select>
-            <button id="gh-set">Setzen</button>
-            <button id="gh-day" class="secondary">Tag (9 Uhr)</button>
-            <button id="gh-night" class="secondary">Nacht (22 Uhr)</button>
-          </div>
-          <div class="form-row">
-            <span id="wt-info" class="muted">–</span>
-            <button id="wt-refresh" class="secondary" title="Tag/Nacht aktualisieren">&#x21bb;</button>
-          </div>
-        </div>
-
-        <div class="card">
           <h3>Chaos</h3>
-          <p class="muted small">WildWrath hetzt wilde Pals in der Umgebung auf den gewählten Spieler.</p>
+          <span class="ctx-chip" data-ctx="player">Kein Spieler gewählt</span>
+          <p class="muted small">WildWrath hetzt wilde Pals in der Umgebung auf den Spieler.</p>
           <div class="form-row">
             <label>Radius (m) <input id="ww-radius" type="number" min="10" max="200" value="60"></label>
             <label>max. Pals <input id="ww-max" type="number" min="1" max="15" value="8"></label>
             <button id="ww-btn" class="danger">WildWrath</button>
           </div>
-          <p class="muted small spaced-top">Wilde Pals entfernen: despawnt wilde Pals im Umkreis des gewählten Spielers.</p>
+          <p class="muted small spaced-top">Wilde Pals entfernen: despawnt wilde Pals im Umkreis.</p>
           <div class="form-row">
             <label>Radius (m) <input id="dw-radius" type="number" min="10" max="200" value="60"></label>
             <label>max. Anzahl <input id="dw-max" type="number" min="1" max="50" value="30"></label>
@@ -223,38 +217,49 @@
           <div class="metric"><div class="val" id="m-bases">–</div><div class="lbl">Basen</div></div>
         </div>
 
-        <div class="card">
-          <h3>Ankündigung</h3>
+        <div id="worldtime-card" class="card" hidden>
+          <h3>Weltzeit</h3>
           <div class="form-row">
-            <input id="ann-msg" type="text" maxlength="300" placeholder="Nachricht an alle Spieler">
+            <select id="gh-hour" aria-label="Stunde wählen"></select>
+            <button id="gh-set">Setzen</button>
+            <button id="gh-day" class="secondary">Tag (9 Uhr)</button>
+            <button id="gh-night" class="secondary">Nacht (22 Uhr)</button>
+          </div>
+          <div class="form-row">
+            <span id="wt-info" class="muted">–</span>
+            <button id="wt-refresh" class="secondary" title="Tag/Nacht aktualisieren">&#x21bb;</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Aktionen</h3>
+          <div class="form-row">
+            <button id="save-btn">Welt speichern</button>
+          </div>
+          <div class="form-row">
+            <input id="ann-msg" type="text" maxlength="300" placeholder="Ankündigung an alle Spieler">
             <button id="ann-btn">Senden</button>
           </div>
         </div>
 
         <div class="card">
-          <h3>Server-Aktionen</h3>
+          <h3>Neustart &amp; Stopp</h3>
+          <p class="muted small">Ansagen an die Spieler erfolgen automatisch (sofort sowie 30/15/10/5/3/1 min vorher).</p>
           <div class="form-row">
-            <button id="save-btn">Welt speichern</button>
+            <label>Minuten <input id="rs-min" type="number" min="1" max="120" value="15"></label>
+            <button id="rs-plan">Neustart planen</button>
+            <button id="rs-cancel" class="secondary" hidden>Abbrechen</button>
           </div>
+          <p id="rs-status" class="muted small"></p>
+          <hr class="card-sep">
           <div class="form-row">
-            <label>Shutdown in <input id="sd-wait" type="number" min="1" max="3600" value="60"> s</label>
+            <label>Sofort-Shutdown in <input id="sd-wait" type="number" min="1" max="3600" value="60"> s</label>
             <input id="sd-msg" type="text" maxlength="300" placeholder="Nachricht (optional)">
             <button id="sd-btn" class="danger">Shutdown</button>
           </div>
           <div class="form-row">
             <button id="stop-btn" class="danger">Force-Stop (ohne Speichern)</button>
           </div>
-        </div>
-
-        <div class="card">
-          <h3>Geplanter Neustart</h3>
-          <p class="muted small">Ansagen an die Spieler erfolgen automatisch (sofort sowie 30/15/10/5/3/1 min vorher).</p>
-          <div class="form-row">
-            <label>Minuten <input id="rs-min" type="number" min="1" max="120" value="15"></label>
-            <button id="rs-plan">Neustart planen</button>
-            <button id="rs-cancel" class="danger" hidden>Abbrechen</button>
-          </div>
-          <p id="rs-status" class="muted small"></p>
         </div>
 
         <div class="card">
@@ -292,8 +297,8 @@
         </div>
 
         <div class="map-legend">
-          <span class="lg"><span class="mk-sample s-player"></span> Spieler</span>
-          <span class="lg"><span class="mk-sample s-base"></span> Basis</span>
+          <span class="lg"><span class="mk-sample s-player"></span> Spieler (Klick: auswählen)</span>
+          <span class="lg"><span class="mk-sample s-base"></span> Basis (Klick: Teleport)</span>
           <span class="lg"><span class="mk-sample s-wild"></span> Wilde Pals</span>
           <span class="lg"><span class="mk-sample s-camp"></span> Basis-Pals</span>
           <span id="map-note"></span>
@@ -309,6 +314,12 @@
         <div class="card">
           <h3>Aktions-Historie</h3>
           <div id="audit-box" class="audit-box"><p class="muted">Historie wird geladen…</p></div>
+        </div>
+
+        <div class="card">
+          <h3>Sitzungsprotokoll (dieser Browser)</h3>
+          <p class="muted small">Meldungen dieser Browser-Sitzung (identisch mit der Status-Leiste unten). Die server-seitige „Aktions-Historie" oben zeigt dagegen die Aktionen aller Admins.</p>
+          <div id="session-log" class="console"></div>
         </div>
 
         <div id="bridge-admin" class="card" hidden>
@@ -341,19 +352,22 @@
     <div id="cart-items" class="cart-items">
       <p class="empty">Noch nichts ausgewählt.<br>Klicke links auf ein Item.</p>
     </div>
-    <div class="cart-player">
-      <label for="cart-player">Spawnen an:</label>
-      <select id="cart-player"><option value="">– Server wird abgefragt –</option></select>
-    </div>
+    <button id="cart-ctx" class="ctx-chip warn" type="button" title="Spieler oben in der Kopfzeile wählen">Spawnen an: – kein Spieler gewählt –</button>
     <div class="cart-footer">
       <button id="clear-cart" class="secondary">Leeren</button>
       <button id="spawn" disabled>Spawnen</button>
     </div>
-
-    <div id="log" class="log"></div>
   </aside>
 </main>
 
-<script src="app.js?v=12"></script>
+<button id="cart-fab" type="button" hidden title="Zum Warenkorb springen">🛒 0</button>
+
+<div id="status-drawer" class="console" hidden></div>
+<div id="status-bar" title="Klick: Protokoll ein-/ausklappen">
+  <span id="status-msg" class="info">Noch keine Meldungen.</span>
+  <span id="status-caret" aria-hidden="true">▴</span>
+</div>
+
+<script src="app.js?v=13"></script>
 </body>
 </html>
