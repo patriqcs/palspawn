@@ -281,9 +281,16 @@ app.get('/api/players', async (req, res) => {
         const steamId = Object.values(ids).find(
           (v) => typeof v === 'string' && /^steam_[A-Za-z0-9]+$/i.test(v),
         ) || null;
+        // Beste uid wählen: Versagt die Guid-Reflection im Mod, ist p.uid ein
+        // "UScriptStruct: <adresse>"-Dump — die Adresse ändert sich pro
+        // Enumeration und taugt nicht als Target. Stabile Kandidaten
+        // (PlayerId "256", PlayerUId-Guid) bevorzugen; der Mod matcht
+        // Targets ohnehin gegen alle ids.
+        const clean = (v) => typeof v === 'string' && v && !/^UScriptStruct/i.test(v) && !v.includes(' ');
+        const userId = [p.uid, ids.PlayerId, ids.PlayerUId, ...Object.values(ids)].find(clean) || p.uid;
         return {
           name: p.name,
-          userId: p.uid,
+          userId,
           level: p.level ?? null,
           steamId,
           pos: p.pos && typeof p.pos.x === 'number'
