@@ -1,12 +1,37 @@
 # PalSpawn
 
-Web-UI für Palworld-Server: zeigt alle Palworld-Items (mit Bild, deutschem + englischem
-Namen), durchsuch-, filter- und sortierbar — und spawnt ausgewählte Items in gewünschter
-Menge direkt ins Inventar eines Spielers, der gerade auf dem Server online ist.
+Web-Admin-Tool für Palworld-Server mit Tab-Oberfläche:
 
-2453 Items inkl. Icons sind ins Image gebundelt (keine Internetverbindung zur Laufzeit nötig).
+- **Items** — alle 2453 Palworld-Items (mit Bild, deutschem + englischem Namen,
+  Rarität), durchsuch-, filter- und sortierbar; spawnt ausgewählte Items in
+  gewünschter Menge ins Inventar eines Online-Spielers.
+- **Spieler** — Online-Liste (Level, Position, IDs mit Klick-zum-Kopieren),
+  Kick/Ban/Unban, Teleport (Koordinaten, gespeicherte Orte, zu Spieler),
+  Charakter-Aktionen: HP setzen, Party-Pals umbenennen, Items entfernen,
+  Zufalls-Drop.
+- **Pals** — Wild-Pals spawnen (ID, Anzahl, Level, Despawn-Timer), gefangene
+  Pals des Spielers spawnen, Weltzeit setzen (Tag/Nacht), WildWrath.
+- **Server** — Dashboard (FPS, Frametime, Spieler, Uptime, Ingame-Tage, Basen),
+  Ankündigungen, Welt speichern, Shutdown mit Countdown, Force-Stop, alle
+  Server-Settings durchsuchbar (read-only).
+- **Logs** — Mod-Status der Paladdon-Bridge (Version, armed, Fehler),
+  Twitch-Troll-Pause, Bridge-Log; im PalDefender-Modus eine RCON-Konsole.
 
-## Zwei Backends
+Welche Tabs/Panels sichtbar sind, richtet sich nach den konfigurierten
+Backends (Feature-Flags aus `/api/config`). Gefährliche Aktionen (Kick, Ban,
+Shutdown, Force-Stop, Item entfernen, WildWrath) fragen immer nach Bestätigung.
+
+Items inkl. Icons sind ins Image gebundelt (keine Internetverbindung zur Laufzeit nötig).
+
+## Backends (kombinierbar)
+
+Die **In-Game-Funktionen** (Items, Teleport, Pals, Charakter-Aktionen) laufen
+über das gewählte Backend (`paladdon` oder `paldefender`). Die
+**Server-Administration** (Server-Tab, Kick/Ban/Unban) nutzt die offizielle
+Palworld REST API und ist unabhängig davon aktiv, sobald
+`PALWORLD_API_URL` + `PALWORLD_API_PASS` gesetzt sind — auch im
+paladdon-Modus (auf dem palchaos-Server läuft die REST API containerintern
+auf Port 8212, `REST_API_ENABLED=true` im Compose).
 
 ### 1. `paladdon` (Standard, sobald `BRIDGE_URL` gesetzt ist)
 
@@ -19,6 +44,18 @@ Volles Inventar meldet der Mod als Fehler pro Item zurück.
 |---|---|---|
 | `BRIDGE_URL` | ja | z. B. `http://<unraid-ip>:8420` |
 | `BRIDGE_TOKEN` | ja | `ADMIN_TOKEN` der Paladdon-Bridge |
+| `PALWORLD_API_URL` + `PALWORLD_API_PASS` | optional | schaltet zusätzlich den Server-Tab + Kick/Ban frei (offizielle REST API) |
+
+Genutzte Bridge-Ops: `giveItem`, `getPos`, `teleportTo`/`teleportOffset`/`teleportToPlayer`,
+`announce`, `setGameHour`, `setHpRate`, `wildWrath`, `renamePartyPals`, `removeItem`,
+`dropRandomSlot`, `spawnPal`, `spawnCaughtPal` — plus Bridge-Status/-Logs/-Pause.
+
+> **Server-Tab auf dem palchaos-Server:** Der REST-API-Port 8212 ist dort bewusst
+> nicht published (Reverse-Proxy würde ihn exponieren). Stattdessen den
+> palspawn-Container ins Docker-Netz des Palworld-Containers hängen
+> (`docker network connect <netz> palspawn`) und
+> `PALWORLD_API_URL=http://<palworld-containername>:8212` setzen.
+> Ohne `PALWORLD_API_URL` bleibt der Server-Tab ausgeblendet.
 
 ### 2. `paldefender` (Fallback für Server mit RCON)
 
@@ -49,8 +86,8 @@ In Unraid: **Docker → Add Container**
 | `BRIDGE_URL` | Backend paladdon | – | Paladdon-Bridge, z. B. `http://192.168.1.50:8420` |
 | `BRIDGE_TOKEN` | Backend paladdon | – | `ADMIN_TOKEN` der Bridge |
 | `BACKEND` | nein | auto | `paladdon` wenn `BRIDGE_URL` gesetzt, sonst `paldefender` |
-| `PALWORLD_API_URL` | Backend paldefender | – | z. B. `http://192.168.1.50:8212` |
-| `PALWORLD_API_PASS` | Backend paldefender | – | AdminPassword des Servers |
+| `PALWORLD_API_URL` | Backend paldefender; sonst optional | – | offizielle REST API, z. B. `http://192.168.1.50:8212` — schaltet Server-Tab + Kick/Ban frei |
+| `PALWORLD_API_PASS` | mit `PALWORLD_API_URL` | – | AdminPassword des Servers |
 | `PALWORLD_API_USER` | nein | `admin` | Basic-Auth-User der REST API |
 | `RCON_HOST` | nein | Host aus `PALWORLD_API_URL` | IP des Palworld-Servers |
 | `RCON_PORT` | nein | `25575` | RCON-Port |

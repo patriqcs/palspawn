@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PalSpawn – Palworld Item Spawner</title>
-<link rel="stylesheet" href="style.css?v=4">
+<title>PalSpawn – Palworld Admin-Tool</title>
+<link rel="stylesheet" href="style.css?v=5">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -21,23 +21,238 @@
   </div>
 </header>
 
-<div class="toolbar">
-  <input id="search" type="search" placeholder="Suchen… (deutscher/englischer Name oder Item-ID)" autocomplete="off">
-  <select id="category"><option value="">Alle Kategorien</option></select>
-  <select id="sort">
-    <option value="name_de">Sortierung: Name (DE) A–Z</option>
-    <option value="name_de_desc">Name (DE) Z–A</option>
-    <option value="name">Name (EN) A–Z</option>
-    <option value="id">Item-ID A–Z</option>
-    <option value="category">Kategorie</option>
-    <option value="rarity">Rarität (Legendär zuerst)</option>
-  </select>
-  <label class="toggle"><input type="checkbox" id="show-unnamed"> interne Items anzeigen</label>
-  <span id="result-count" class="count"></span>
-</div>
+<nav id="tabs" class="tabs" aria-label="Bereiche">
+  <button type="button" class="tab active" data-tab="items">Items</button>
+  <button type="button" class="tab" data-tab="players">Spieler</button>
+  <button type="button" class="tab" data-tab="pals" hidden>Pals</button>
+  <button type="button" class="tab" data-tab="server" hidden>Server</button>
+  <button type="button" class="tab" data-tab="logs" hidden>Logs</button>
+</nav>
 
 <main>
-  <section id="grid" class="grid" aria-label="Itemliste"></section>
+  <div class="panels">
+
+    <!-- ================= Items ================= -->
+    <section id="panel-items" class="panel">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Suchen… (deutscher/englischer Name oder Item-ID)" autocomplete="off">
+        <select id="category"><option value="">Alle Kategorien</option></select>
+        <select id="sort">
+          <option value="name_de">Sortierung: Name (DE) A–Z</option>
+          <option value="name_de_desc">Name (DE) Z–A</option>
+          <option value="name">Name (EN) A–Z</option>
+          <option value="id">Item-ID A–Z</option>
+          <option value="category">Kategorie</option>
+          <option value="rarity">Rarität (Legendär zuerst)</option>
+        </select>
+        <label class="toggle"><input type="checkbox" id="show-unnamed"> interne Items anzeigen</label>
+        <span id="result-count" class="count"></span>
+      </div>
+      <section id="grid" class="grid" aria-label="Itemliste"></section>
+    </section>
+
+    <!-- ================= Spieler ================= -->
+    <section id="panel-players" class="panel" hidden>
+      <div class="panel-inner">
+
+        <div class="card">
+          <h3>Online-Spieler</h3>
+          <div id="players-box" class="table-wrap">
+            <p class="muted">Spielerliste wird geladen…</p>
+          </div>
+          <div id="unban-row" class="form-row" hidden>
+            <label for="unban-id">Entbannen:</label>
+            <input id="unban-id" type="text" placeholder="userId (z. B. steam_7656…)">
+            <button id="unban-btn" class="secondary">Entbannen</button>
+          </div>
+        </div>
+
+        <details id="teleport" class="card" open hidden>
+          <summary>Teleport</summary>
+          <div class="tp-body">
+            <div class="tp-row">
+              <button id="tp-getpos" class="secondary">Position holen</button>
+              <span id="tp-pos" class="tp-pos"></span>
+            </div>
+            <div class="tp-row tp-coords">
+              <input id="tp-x" type="number" step="any" placeholder="X" aria-label="X-Koordinate">
+              <input id="tp-y" type="number" step="any" placeholder="Y" aria-label="Y-Koordinate">
+              <input id="tp-z" type="number" step="any" placeholder="Z" aria-label="Z-Koordinate">
+              <button id="tp-go">Teleportieren</button>
+            </div>
+            <div class="tp-row">
+              <select id="tp-spots" aria-label="Gespeicherte Orte"><option value="">– gespeicherte Orte –</option></select>
+              <button id="tp-save" class="secondary" title="Aktuelle Koordinaten aus den Feldern speichern">Speichern</button>
+              <button id="tp-del" class="secondary" title="Gewählten Ort löschen">✕</button>
+            </div>
+            <div class="tp-row">
+              <select id="tp-player" aria-label="Zu Spieler teleportieren"><option value="">– zu Spieler –</option></select>
+              <button id="tp-toplayer">Dorthin</button>
+            </div>
+          </div>
+        </details>
+
+        <div id="char-actions" class="card" hidden>
+          <h3>Charakter-Aktionen</h3>
+          <p class="muted small">Wirken auf den oben in der Kopfzeile gewählten Spieler.</p>
+          <div class="form-row">
+            <label for="hp-range">HP setzen:</label>
+            <input id="hp-range" type="range" min="1" max="100" value="100" aria-label="HP in Prozent">
+            <input id="hp-num" type="number" min="1" max="100" value="100" aria-label="HP in Prozent"> %
+            <button id="hp-set">Setzen</button>
+          </div>
+          <div class="form-row">
+            <label for="rn-name">Party-Pals umbenennen:</label>
+            <input id="rn-name" type="text" maxlength="40" placeholder="Neuer Name">
+            <label>Anzahl <input id="rn-max" type="number" min="1" max="5" value="1"></label>
+            <label class="toggle"><input type="checkbox" id="rn-announce"> im Spiel ankündigen</label>
+            <button id="rn-apply">Umbenennen</button>
+            <button id="rn-reset" class="secondary">Namen zurücksetzen</button>
+          </div>
+          <div class="form-row">
+            <label for="ri-id">Item entfernen:</label>
+            <input id="ri-id" type="text" list="item-ids" placeholder="Item-ID" autocomplete="off">
+            <label>Menge <input id="ri-count" type="number" min="1" max="9999" value="1"></label>
+            <button id="ri-btn" class="danger">Entfernen</button>
+          </div>
+          <div class="form-row">
+            <button id="drop-btn" class="danger">Zufälliges Item fallen lassen</button>
+          </div>
+          <datalist id="item-ids"></datalist>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= Pals ================= -->
+    <section id="panel-pals" class="panel" hidden>
+      <div class="panel-inner">
+
+        <div class="card">
+          <h3>Wild-Pal spawnen</h3>
+          <p class="muted small">Spawnt beim gewählten Spieler. Der Spawn kann bis zu 75 Sekunden dauern.</p>
+          <div class="form-row">
+            <input id="sp-palid" type="text" placeholder="Pal-ID (z. B. SheepBall)" autocomplete="off">
+            <label>Anzahl <input id="sp-count" type="number" min="1" max="10" value="1"></label>
+            <label>Level <input id="sp-level" type="number" min="1" max="65" value="1"></label>
+            <label>Despawn nach <input id="sp-despawn" type="number" min="5" max="600" placeholder="Sek."></label>
+            <button id="sp-btn">Spawnen</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Gefangene Pals spawnen</h3>
+          <p class="muted small">Spawnt Kopien der gefangenen Pals des gewählten Spielers.</p>
+          <div class="form-row">
+            <label>Anzahl <input id="sc-count" type="number" min="1" max="10" value="3"></label>
+            <label>Level-Offset <input id="sc-offset" type="number" min="-50" max="50" value="5"></label>
+            <button id="sc-btn">Spawnen</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Weltzeit</h3>
+          <div class="form-row">
+            <select id="gh-hour" aria-label="Stunde wählen"></select>
+            <button id="gh-set">Setzen</button>
+            <button id="gh-day" class="secondary">Tag (9 Uhr)</button>
+            <button id="gh-night" class="secondary">Nacht (22 Uhr)</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Chaos</h3>
+          <p class="muted small">WildWrath hetzt wilde Pals in der Umgebung auf den gewählten Spieler.</p>
+          <div class="form-row">
+            <label>Radius (m) <input id="ww-radius" type="number" min="10" max="200" value="60"></label>
+            <label>max. Pals <input id="ww-max" type="number" min="1" max="15" value="8"></label>
+            <button id="ww-btn" class="danger">WildWrath</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= Server ================= -->
+    <section id="panel-server" class="panel" hidden>
+      <div class="panel-inner">
+
+        <div class="card">
+          <h3 id="srv-name">–</h3>
+          <p id="srv-version" class="muted small"></p>
+          <p id="srv-desc"></p>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric"><div class="val" id="m-fps">–</div><div class="lbl">FPS</div></div>
+          <div class="metric"><div class="val" id="m-frametime">–</div><div class="lbl">Frametime (ms)</div></div>
+          <div class="metric"><div class="val" id="m-players">–</div><div class="lbl">Spieler</div></div>
+          <div class="metric"><div class="val" id="m-uptime">–</div><div class="lbl">Uptime</div></div>
+          <div class="metric"><div class="val" id="m-days">–</div><div class="lbl">Ingame-Tage</div></div>
+          <div class="metric"><div class="val" id="m-bases">–</div><div class="lbl">Basen</div></div>
+        </div>
+
+        <div class="card">
+          <h3>Ankündigung</h3>
+          <div class="form-row">
+            <input id="ann-msg" type="text" maxlength="300" placeholder="Nachricht an alle Spieler">
+            <button id="ann-btn">Senden</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Server-Aktionen</h3>
+          <div class="form-row">
+            <button id="save-btn">Welt speichern</button>
+          </div>
+          <div class="form-row">
+            <label>Shutdown in <input id="sd-wait" type="number" min="1" max="3600" value="60"> s</label>
+            <input id="sd-msg" type="text" maxlength="300" placeholder="Nachricht (optional)">
+            <button id="sd-btn" class="danger">Shutdown</button>
+          </div>
+          <div class="form-row">
+            <button id="stop-btn" class="danger">Force-Stop (ohne Speichern)</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Einstellungen</h3>
+          <div class="form-row">
+            <input id="set-search" type="search" placeholder="Einstellung suchen…" autocomplete="off">
+          </div>
+          <div id="settings-box" class="table-wrap">
+            <p class="muted">Einstellungen werden geladen…</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= Logs ================= -->
+    <section id="panel-logs" class="panel" hidden>
+      <div class="panel-inner">
+
+        <div id="bridge-admin" class="card" hidden>
+          <h3>Mod-Status</h3>
+          <div id="bridge-status" class="kv"><span class="muted">Status wird geladen…</span></div>
+          <label class="toggle"><input type="checkbox" id="pause-toggle"> Twitch-Trolls pausiert</label>
+          <h3 class="spaced">Bridge-Log</h3>
+          <div id="bridge-logs" class="console"></div>
+        </div>
+
+        <div id="rcon-box" class="card" hidden>
+          <h3>RCON-Konsole</h3>
+          <div id="rcon-out" class="console"></div>
+          <div class="form-row">
+            <input id="rcon-in" type="text" placeholder="Befehl… (Enter zum Senden, ↑/↓ für Historie)" autocomplete="off" spellcheck="false">
+            <button id="rcon-send">Senden</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
 
   <aside id="cart">
     <h2>Ausgewählte Items</h2>
@@ -49,35 +264,10 @@
       <button id="spawn" disabled>Spawnen</button>
     </div>
 
-    <details id="teleport">
-      <summary>Teleport</summary>
-      <div class="tp-body">
-        <div class="tp-row">
-          <button id="tp-getpos" class="secondary">Position holen</button>
-          <span id="tp-pos" class="tp-pos"></span>
-        </div>
-        <div class="tp-row tp-coords">
-          <input id="tp-x" type="number" step="any" placeholder="X" aria-label="X-Koordinate">
-          <input id="tp-y" type="number" step="any" placeholder="Y" aria-label="Y-Koordinate">
-          <input id="tp-z" type="number" step="any" placeholder="Z" aria-label="Z-Koordinate">
-          <button id="tp-go">Teleportieren</button>
-        </div>
-        <div class="tp-row">
-          <select id="tp-spots" aria-label="Gespeicherte Orte"><option value="">– gespeicherte Orte –</option></select>
-          <button id="tp-save" class="secondary" title="Aktuelle Koordinaten aus den Feldern speichern">Speichern</button>
-          <button id="tp-del" class="secondary" title="Gewählten Ort löschen">✕</button>
-        </div>
-        <div class="tp-row">
-          <select id="tp-player" aria-label="Zu Spieler teleportieren"><option value="">– zu Spieler –</option></select>
-          <button id="tp-toplayer">Dorthin</button>
-        </div>
-      </div>
-    </details>
-
     <div id="log" class="log"></div>
   </aside>
 </main>
 
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

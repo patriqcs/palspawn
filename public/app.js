@@ -6,22 +6,42 @@ const state = {
   items: [],
   cart: new Map(), // id -> amount
   players: [],
+  backend: null,
+  features: { give: true, teleport: false, palOps: false, bridgeAdmin: false, serverAdmin: false, rcon: false },
+  activeTab: 'items',
+  serverTimer: null,   // Metrik-Polling (nur solange Server-Tab aktiv)
+  logsTimer: null,     // Bridge-Status/Log-Polling (nur solange Logs-Tab aktiv)
+  settings: null,      // gecachte /api/server/settings
+  lastMetricsErr: null,
+  lastBridgeErr: null,
+  rconHistory: [],
+  rconHistIdx: 0,
 };
 
 const els = {
+  // Header / global
+  playerSelect: $('#player-select'),
+  refreshPlayers: $('#refresh-players'),
+  serverStatus: $('#server-status'),
+  tabs: $('#tabs'),
+  // Items-Tab
   grid: $('#grid'),
   search: $('#search'),
   category: $('#category'),
   sort: $('#sort'),
   showUnnamed: $('#show-unnamed'),
   count: $('#result-count'),
-  playerSelect: $('#player-select'),
-  refreshPlayers: $('#refresh-players'),
-  serverStatus: $('#server-status'),
+  // Cart-Sidebar
   cartItems: $('#cart-items'),
   clearCart: $('#clear-cart'),
   spawn: $('#spawn'),
   log: $('#log'),
+  // Spieler-Tab
+  playersBox: $('#players-box'),
+  unbanRow: $('#unban-row'),
+  unbanId: $('#unban-id'),
+  unbanBtn: $('#unban-btn'),
+  teleport: $('#teleport'),
   tpGetpos: $('#tp-getpos'),
   tpPos: $('#tp-pos'),
   tpX: $('#tp-x'),
@@ -33,6 +53,64 @@ const els = {
   tpDel: $('#tp-del'),
   tpPlayer: $('#tp-player'),
   tpToplayer: $('#tp-toplayer'),
+  charActions: $('#char-actions'),
+  hpRange: $('#hp-range'),
+  hpNum: $('#hp-num'),
+  hpSet: $('#hp-set'),
+  rnName: $('#rn-name'),
+  rnMax: $('#rn-max'),
+  rnAnnounce: $('#rn-announce'),
+  rnApply: $('#rn-apply'),
+  rnReset: $('#rn-reset'),
+  riId: $('#ri-id'),
+  riCount: $('#ri-count'),
+  riBtn: $('#ri-btn'),
+  dropBtn: $('#drop-btn'),
+  itemIds: $('#item-ids'),
+  // Pals-Tab
+  spPalid: $('#sp-palid'),
+  spCount: $('#sp-count'),
+  spLevel: $('#sp-level'),
+  spDespawn: $('#sp-despawn'),
+  spBtn: $('#sp-btn'),
+  scCount: $('#sc-count'),
+  scOffset: $('#sc-offset'),
+  scBtn: $('#sc-btn'),
+  ghHour: $('#gh-hour'),
+  ghSet: $('#gh-set'),
+  ghDay: $('#gh-day'),
+  ghNight: $('#gh-night'),
+  wwRadius: $('#ww-radius'),
+  wwMax: $('#ww-max'),
+  wwBtn: $('#ww-btn'),
+  // Server-Tab
+  srvName: $('#srv-name'),
+  srvVersion: $('#srv-version'),
+  srvDesc: $('#srv-desc'),
+  mFps: $('#m-fps'),
+  mFrametime: $('#m-frametime'),
+  mPlayers: $('#m-players'),
+  mUptime: $('#m-uptime'),
+  mDays: $('#m-days'),
+  mBases: $('#m-bases'),
+  annMsg: $('#ann-msg'),
+  annBtn: $('#ann-btn'),
+  saveBtn: $('#save-btn'),
+  sdWait: $('#sd-wait'),
+  sdMsg: $('#sd-msg'),
+  sdBtn: $('#sd-btn'),
+  stopBtn: $('#stop-btn'),
+  setSearch: $('#set-search'),
+  settingsBox: $('#settings-box'),
+  // Logs-Tab
+  bridgeAdmin: $('#bridge-admin'),
+  bridgeStatus: $('#bridge-status'),
+  pauseToggle: $('#pause-toggle'),
+  bridgeLogs: $('#bridge-logs'),
+  rconBox: $('#rcon-box'),
+  rconOut: $('#rcon-out'),
+  rconIn: $('#rcon-in'),
+  rconSend: $('#rcon-send'),
 };
 
 const RARITY_LABELS = ['Gewöhnlich', 'Ungewöhnlich', 'Selten', 'Episch', 'Legendär'];
@@ -59,6 +137,117 @@ const CATEGORY_LABELS = {
 };
 
 // ---------------------------------------------------------------------------
+// Helfer
+// ---------------------------------------------------------------------------
+
+function logLine(text, cls = 'info') {
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = text;
+  els.log.prepend(div);
+  while (els.log.children.length > 60) els.log.lastChild.remove();
+}
+
+async function apiGet(path) {
+  const resp = await fetch(path);
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
+async function apiPost(path, body) {
+  const resp = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
+function clampInt(v, min, max, def) {
+  const n = parseInt(v, 10);
+  if (!Number.isInteger(n)) return def;
+  return Math.max(min, Math.min(max, n));
+}
+
+function copyText(text) {
+  if (!navigator.clipboard) return logLine('Kopieren wird vom Browser nicht unterstützt.', 'err');
+  navigator.clipboard.writeText(text).then(
+    () => logLine(`Kopiert: ${text}`, 'info'),
+    () => logLine('Kopieren fehlgeschlagen.', 'err'),
+  );
+}
+
+function requirePlayer() {
+  const userId = els.playerSelect.value;
+  if (!userId) logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  return userId;
+}
+
+function selectedPlayerName() {
+  const p = state.players.find((x) => x.userId === els.playerSelect.value);
+  return p ? p.name : els.playerSelect.value;
+}
+
+// ---------------------------------------------------------------------------
+// Konfiguration + Tabs
+// ---------------------------------------------------------------------------
+
+const TAB_KEY = 'palspawn.tab';
+
+function tabAvailable(tab) {
+  const f = state.features;
+  if (tab === 'items' || tab === 'players') return true;
+  if (tab === 'pals') return f.palOps;
+  if (tab === 'server') return f.serverAdmin;
+  if (tab === 'logs') return f.bridgeAdmin || f.rcon;
+  return false;
+}
+
+function applyFeatures() {
+  const f = state.features;
+  for (const btn of els.tabs.querySelectorAll('.tab')) {
+    btn.hidden = !tabAvailable(btn.dataset.tab);
+  }
+  els.teleport.hidden = !f.teleport;
+  els.charActions.hidden = !f.palOps;
+  els.unbanRow.hidden = !f.serverAdmin;
+  els.bridgeAdmin.hidden = !f.bridgeAdmin;
+  els.rconBox.hidden = !f.rcon;
+}
+
+function setTab(tab) {
+  if (!tabAvailable(tab)) tab = 'items';
+  state.activeTab = tab;
+  localStorage.setItem(TAB_KEY, tab);
+  for (const btn of els.tabs.querySelectorAll('.tab')) {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  }
+  for (const panel of document.querySelectorAll('.panel')) {
+    panel.hidden = panel.id !== `panel-${tab}`;
+  }
+  // Polling nur solange der jeweilige Tab aktiv ist
+  stopServerPolling();
+  stopLogsPolling();
+  if (tab === 'server') startServerPolling();
+  if (tab === 'logs' && state.features.bridgeAdmin) startLogsPolling();
+}
+
+async function loadConfig() {
+  try {
+    const data = await apiGet('api/config');
+    state.backend = data.backend || null;
+    state.features = { ...state.features, ...(data.features || {}) };
+  } catch (err) {
+    logLine(`Konfiguration: ${err.message}`, 'err');
+  }
+  applyFeatures();
+  setTab(localStorage.getItem(TAB_KEY) || 'items');
+}
+
+// ---------------------------------------------------------------------------
 // Items laden + rendern
 // ---------------------------------------------------------------------------
 
@@ -74,6 +263,17 @@ async function loadItems() {
     opt.textContent = CATEGORY_LABELS[c] || c;
     els.category.appendChild(opt);
   }
+
+  // Datalist für „Item entfernen" (Charakter-Aktionen)
+  const dl = document.createDocumentFragment();
+  for (const i of state.items) {
+    const opt = document.createElement('option');
+    opt.value = i.id;
+    if (i.localized) opt.label = i.name_de;
+    dl.appendChild(opt);
+  }
+  els.itemIds.replaceChildren(dl);
+
   render();
 }
 
@@ -267,19 +467,156 @@ async function loadPlayers() {
   }
   updateSpawnButton();
   renderTpPlayers();
+  renderPlayersTable();
+}
+
+// Plattform-ID für Kick/Ban (REST API erwartet z. B. steam_<id64>):
+// paladdon liefert sie als steamId, bei paldefender ist userId bereits die
+// Plattform-ID.
+function platformId(p) {
+  if (p.steamId) return p.steamId;
+  if (state.backend !== 'paladdon' && typeof p.userId === 'string' && p.userId) return p.userId;
+  return null;
+}
+
+function posText(p) {
+  if (p.pos && typeof p.pos.x === 'number') {
+    return `${Math.round(p.pos.x)} / ${Math.round(p.pos.y)} / ${Math.round(p.pos.z)}`;
+  }
+  if (typeof p.location_x === 'number' && typeof p.location_y === 'number') {
+    return `${Math.round(p.location_x)} / ${Math.round(p.location_y)}`;
+  }
+  return '–';
+}
+
+function renderPlayersTable() {
+  if (!state.players.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Keine Spieler online.';
+    els.playersBox.replaceChildren(p);
+    return;
+  }
+  const hasSteam = state.players.some((p) => p.steamId);
+  const hasPing = state.players.some((p) => p.ping != null);
+  const hasIp = state.players.some((p) => p.ip);
+
+  const table = document.createElement('table');
+  table.className = 'data';
+  const thead = document.createElement('thead');
+  const hrow = document.createElement('tr');
+  const cols = ['Name', 'Level', 'Position', 'userId'];
+  if (hasSteam) cols.push('steamId');
+  if (hasPing) cols.push('Ping');
+  if (hasIp) cols.push('IP');
+  cols.push('');
+  for (const c of cols) {
+    const th = document.createElement('th');
+    th.textContent = c;
+    hrow.appendChild(th);
+  }
+  thead.appendChild(hrow);
+
+  const tbody = document.createElement('tbody');
+  for (const p of state.players) {
+    const tr = document.createElement('tr');
+    const td = (text) => {
+      const cell = document.createElement('td');
+      cell.textContent = text;
+      tr.appendChild(cell);
+      return cell;
+    };
+    td(p.name || '–');
+    td(p.level != null ? String(p.level) : '–');
+    td(posText(p));
+    const uidCell = td(p.userId || '–');
+    if (p.userId) {
+      uidCell.className = 'copy';
+      uidCell.title = 'Klicken zum Kopieren';
+      uidCell.addEventListener('click', () => copyText(p.userId));
+    }
+    if (hasSteam) {
+      const sidCell = td(p.steamId || '–');
+      if (p.steamId) {
+        sidCell.className = 'copy';
+        sidCell.title = 'Klicken zum Kopieren';
+        sidCell.addEventListener('click', () => copyText(p.steamId));
+      }
+    }
+    if (hasPing) td(p.ping != null ? `${Math.round(p.ping)} ms` : '–');
+    if (hasIp) td(p.ip || '–');
+
+    const actCell = document.createElement('td');
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    const sel = document.createElement('button');
+    sel.type = 'button';
+    sel.textContent = 'Auswählen';
+    sel.addEventListener('click', () => {
+      els.playerSelect.value = p.userId;
+      updateSpawnButton();
+      renderTpPlayers();
+      logLine(`Spieler ${p.name} ausgewählt.`, 'info');
+    });
+    actions.appendChild(sel);
+    if (state.features.serverAdmin) {
+      for (const [action, label] of [['kick', 'Kick'], ['ban', 'Bannen']]) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'danger';
+        b.textContent = label;
+        const pid = platformId(p);
+        if (!pid) {
+          b.disabled = true;
+          b.title = 'Keine Plattform-ID (steamId) bekannt';
+        } else {
+          b.addEventListener('click', () => kickBan(action, p, pid));
+        }
+        actions.appendChild(b);
+      }
+    }
+    actCell.appendChild(actions);
+    tr.appendChild(actCell);
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  els.playersBox.replaceChildren(table);
+}
+
+async function kickBan(action, p, pid) {
+  const verb = action === 'kick' ? 'kicken' : 'bannen';
+  const message = window.prompt(`Grund (optional) – ${p.name} ${verb}:`, '');
+  if (message === null) return; // abgebrochen
+  if (!window.confirm(`${p.name} wirklich ${verb}?`)) return;
+  try {
+    await apiPost(`api/server/${action}`, {
+      userId: pid,
+      ...(message.trim() ? { message: message.trim() } : {}),
+    });
+    logLine(`${p.name} ${action === 'kick' ? 'gekickt' : 'gebannt'}.`, 'ok');
+    loadPlayers();
+  } catch (err) {
+    logLine(`${action === 'kick' ? 'Kick' : 'Bann'}: ${err.message}`, 'err');
+  }
+}
+
+async function unban() {
+  const userId = els.unbanId.value.trim();
+  if (!userId) return logLine('Entbannen: userId eingeben.', 'err');
+  els.unbanBtn.disabled = true;
+  try {
+    await apiPost('api/server/unban', { userId });
+    logLine(`${userId} entbannt.`, 'ok');
+    els.unbanId.value = '';
+  } catch (err) {
+    logLine(`Entbannen: ${err.message}`, 'err');
+  }
+  els.unbanBtn.disabled = false;
 }
 
 // ---------------------------------------------------------------------------
-// Spawnen
+// Spawnen (Items)
 // ---------------------------------------------------------------------------
-
-function logLine(text, cls = 'info') {
-  const div = document.createElement('div');
-  div.className = cls;
-  div.textContent = text;
-  els.log.prepend(div);
-  while (els.log.children.length > 60) els.log.lastChild.remove();
-}
 
 async function spawn() {
   const userId = els.playerSelect.value;
@@ -363,21 +700,9 @@ function renderTpPlayers() {
   if ([...els.tpPlayer.options].some((o) => o.value === prev)) els.tpPlayer.value = prev;
 }
 
-function requirePlayer() {
-  const userId = els.playerSelect.value;
-  if (!userId) logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
-  return userId;
-}
-
 async function tpApi(path, body, okMsg) {
   try {
-    const resp = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    const data = await apiPost(path, body);
     if (okMsg) logLine(okMsg, 'ok');
     return data;
   } catch (err) {
@@ -460,9 +785,447 @@ function tpSelectSpot() {
 }
 
 // ---------------------------------------------------------------------------
+// Bridge-Ops (Charakter-Aktionen + Pals)
+// ---------------------------------------------------------------------------
+
+// Schickt eine Op an api/bridge/op. userId wird automatisch aus der globalen
+// Spielerauswahl mitgeschickt (bei needPlayer=false nur, wenn gewählt).
+async function bridgeOp(op, params, { needPlayer = true, okMsg, btn } = {}) {
+  const userId = els.playerSelect.value;
+  if (needPlayer && !userId) {
+    logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+    return null;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const data = await apiPost('api/bridge/op', {
+      op,
+      ...(userId ? { userId } : {}),
+      ...params,
+    });
+    if (okMsg) logLine(okMsg, 'ok');
+    return data;
+  } catch (err) {
+    logLine(`${op}: ${err.message}`, 'err');
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function hpApply() {
+  const pct = clampInt(els.hpNum.value, 1, 100, 100);
+  els.hpNum.value = pct;
+  els.hpRange.value = pct;
+  await bridgeOp('setHpRate', { rate: Math.max(0.01, pct / 100) },
+    { okMsg: `HP von ${selectedPlayerName()} auf ${pct} % gesetzt.`, btn: els.hpSet });
+}
+
+async function renameApply() {
+  const name = els.rnName.value.trim();
+  if (!name) return logLine('Umbenennen: Namen eingeben.', 'err');
+  const maxPals = clampInt(els.rnMax.value, 1, 5, 1);
+  await bridgeOp('renamePartyPals',
+    { name, maxPals, reset: false, announceResult: els.rnAnnounce.checked },
+    { okMsg: `Bis zu ${maxPals} Party-Pal(s) in „${name}" umbenannt.`, btn: els.rnApply });
+}
+
+async function renameReset() {
+  const maxPals = clampInt(els.rnMax.value, 1, 5, 5);
+  await bridgeOp('renamePartyPals',
+    { name: '', maxPals, reset: true, announceResult: els.rnAnnounce.checked },
+    { okMsg: 'Pal-Namen zurückgesetzt.', btn: els.rnReset });
+}
+
+async function removeItem() {
+  const itemId = els.riId.value.trim();
+  if (!itemId) return logLine('Item entfernen: Item-ID eingeben.', 'err');
+  const count = clampInt(els.riCount.value, 1, 9999, 1);
+  const item = state.items.find((i) => i.id === itemId);
+  const label = item ? item.name_de : itemId;
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  if (!window.confirm(`${count}× ${label} bei ${selectedPlayerName()} entfernen?`)) return;
+  await bridgeOp('removeItem', { itemId, count },
+    { okMsg: `${count}× ${label} entfernt.`, btn: els.riBtn });
+}
+
+async function dropRandomSlot() {
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  if (!window.confirm(`${selectedPlayerName()} lässt einen zufälligen Inventar-Slot fallen. Sicher?`)) return;
+  await bridgeOp('dropRandomSlot', {},
+    { okMsg: 'Zufälliger Inventar-Slot fallen gelassen.', btn: els.dropBtn });
+}
+
+// ---------------------------------------------------------------------------
+// Pals-Tab
+// ---------------------------------------------------------------------------
+
+async function spawnPal() {
+  const palId = els.spPalid.value.trim();
+  if (!palId) return logLine('Pal spawnen: Pal-ID eingeben.', 'err');
+  const params = {
+    palId,
+    count: clampInt(els.spCount.value, 1, 10, 1),
+    level: clampInt(els.spLevel.value, 1, 65, 1),
+  };
+  const despawn = clampInt(els.spDespawn.value, 5, 600, null);
+  if (despawn !== null) params.despawnAfterSec = despawn;
+  els.spBtn.textContent = 'Spawne… (bis 75 s)';
+  await bridgeOp('spawnPal', params,
+    { okMsg: `${params.count}× ${palId} (Level ${params.level}) gespawnt.`, btn: els.spBtn });
+  els.spBtn.textContent = 'Spawnen';
+}
+
+async function spawnCaughtPal() {
+  const params = {
+    count: clampInt(els.scCount.value, 1, 10, 3),
+    levelOffset: clampInt(els.scOffset.value, -50, 50, 5),
+  };
+  els.scBtn.textContent = 'Spawne… (bis 75 s)';
+  await bridgeOp('spawnCaughtPal', params,
+    { okMsg: `${params.count} gefangene Pal(s) gespawnt (Offset ${params.levelOffset}).`, btn: els.scBtn });
+  els.scBtn.textContent = 'Spawnen';
+}
+
+async function setGameHour(hour) {
+  await bridgeOp('setGameHour', { hour },
+    { needPlayer: false, okMsg: `Weltzeit auf ${hour}:00 Uhr gesetzt.`, btn: els.ghSet });
+}
+
+async function wildWrath() {
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  const radiusM = clampInt(els.wwRadius.value, 10, 200, 60);
+  const maxPals = clampInt(els.wwMax.value, 1, 15, 8);
+  if (!window.confirm(`WildWrath: bis zu ${maxPals} wilde Pals im Umkreis von ${radiusM} m auf ${selectedPlayerName()} hetzen?`)) return;
+  await bridgeOp('wildWrath', { radiusM, maxPals },
+    { okMsg: `WildWrath auf ${selectedPlayerName()} ausgelöst.`, btn: els.wwBtn });
+}
+
+// ---------------------------------------------------------------------------
+// Server-Tab (offizielle REST API)
+// ---------------------------------------------------------------------------
+
+function fmtUptime(sec) {
+  if (typeof sec !== 'number' || !Number.isFinite(sec)) return '–';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `${d}d ${h}h ${m}m`;
+}
+
+async function loadServerInfo() {
+  try {
+    const d = await apiGet('api/server/info');
+    els.srvName.textContent = d.servername || 'Palworld-Server';
+    els.srvVersion.textContent = d.version ? `Version ${d.version}` : '';
+    els.srvDesc.textContent = d.description || '';
+  } catch (err) {
+    logLine(`Server-Info: ${err.message}`, 'err');
+  }
+}
+
+async function loadServerMetrics() {
+  try {
+    const d = await apiGet('api/server/metrics');
+    state.lastMetricsErr = null;
+    els.mFps.textContent = d.serverfps != null ? String(d.serverfps) : '–';
+    els.mFrametime.textContent = typeof d.serverframetime === 'number' ? d.serverframetime.toFixed(1) : '–';
+    els.mPlayers.textContent = d.currentplayernum != null ? `${d.currentplayernum} / ${d.maxplayernum ?? '?'}` : '–';
+    els.mUptime.textContent = fmtUptime(d.uptime);
+    els.mDays.textContent = d.days != null ? String(d.days) : '–';
+    els.mBases.textContent = d.basecampnum != null ? String(d.basecampnum) : '–';
+  } catch (err) {
+    // Beim 10-s-Polling nicht denselben Fehler wiederholt loggen
+    if (state.lastMetricsErr !== err.message) {
+      state.lastMetricsErr = err.message;
+      logLine(`Server-Metriken: ${err.message}`, 'err');
+    }
+  }
+}
+
+async function loadSettings() {
+  if (state.settings) return;
+  try {
+    state.settings = await apiGet('api/server/settings');
+    renderSettings();
+  } catch (err) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `Einstellungen nicht ladbar: ${err.message}`;
+    els.settingsBox.replaceChildren(p);
+  }
+}
+
+function renderSettings() {
+  if (!state.settings) return;
+  const q = els.setSearch.value.trim().toLowerCase();
+  const entries = Object.entries(state.settings)
+    .filter(([k, v]) => !q || k.toLowerCase().includes(q) || String(v).toLowerCase().includes(q));
+  const table = document.createElement('table');
+  table.className = 'data';
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  for (const c of ['Einstellung', 'Wert']) {
+    const th = document.createElement('th');
+    th.textContent = c;
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  const tbody = document.createElement('tbody');
+  for (const [k, v] of entries) {
+    const tr = document.createElement('tr');
+    const tdK = document.createElement('td');
+    tdK.textContent = k;
+    const tdV = document.createElement('td');
+    tdV.textContent = String(v);
+    tr.append(tdK, tdV);
+    tbody.appendChild(tr);
+  }
+  if (!entries.length) {
+    const tr = document.createElement('tr');
+    const tdE = document.createElement('td');
+    tdE.colSpan = 2;
+    tdE.className = 'muted';
+    tdE.textContent = 'Keine Treffer.';
+    tr.appendChild(tdE);
+    tbody.appendChild(tr);
+  }
+  table.append(thead, tbody);
+  els.settingsBox.replaceChildren(table);
+}
+
+function startServerPolling() {
+  if (!state.features.serverAdmin) return;
+  loadServerInfo();
+  loadSettings();
+  loadServerMetrics();
+  state.serverTimer = setInterval(loadServerMetrics, 10000);
+}
+
+function stopServerPolling() {
+  if (state.serverTimer) {
+    clearInterval(state.serverTimer);
+    state.serverTimer = null;
+  }
+}
+
+async function srvAnnounce() {
+  const message = els.annMsg.value.trim();
+  if (!message) return logLine('Ankündigung: Nachricht eingeben.', 'err');
+  els.annBtn.disabled = true;
+  try {
+    await apiPost('api/server/announce', { message });
+    logLine('Ankündigung gesendet.', 'ok');
+    els.annMsg.value = '';
+  } catch (err) {
+    logLine(`Ankündigung: ${err.message}`, 'err');
+  }
+  els.annBtn.disabled = false;
+}
+
+async function srvSave() {
+  els.saveBtn.disabled = true;
+  els.saveBtn.textContent = 'Speichere…';
+  try {
+    await apiPost('api/server/save');
+    logLine('Welt gespeichert.', 'ok');
+  } catch (err) {
+    logLine(`Speichern: ${err.message}`, 'err');
+  }
+  els.saveBtn.disabled = false;
+  els.saveBtn.textContent = 'Welt speichern';
+}
+
+async function srvShutdown() {
+  const waittime = clampInt(els.sdWait.value, 1, 3600, 60);
+  els.sdWait.value = waittime;
+  const message = els.sdMsg.value.trim();
+  if (!window.confirm(`Server in ${waittime} s herunterfahren (mit Speichern)?`)) return;
+  els.sdBtn.disabled = true;
+  try {
+    await apiPost('api/server/shutdown', { waittime, ...(message ? { message } : {}) });
+    logLine(`Shutdown in ${waittime} s eingeleitet.`, 'ok');
+  } catch (err) {
+    logLine(`Shutdown: ${err.message}`, 'err');
+  }
+  els.sdBtn.disabled = false;
+}
+
+async function srvStop() {
+  if (!window.confirm('Server sofort stoppen?')) return;
+  if (!window.confirm('Wirklich? Der Server stoppt SOFORT und speichert NICHT!')) return;
+  els.stopBtn.disabled = true;
+  try {
+    await apiPost('api/server/stop');
+    logLine('Force-Stop gesendet.', 'ok');
+  } catch (err) {
+    logLine(`Force-Stop: ${err.message}`, 'err');
+  }
+  els.stopBtn.disabled = false;
+}
+
+// ---------------------------------------------------------------------------
+// Logs-Tab: Bridge-Admin + RCON
+// ---------------------------------------------------------------------------
+
+function fmtTs(ts) {
+  if (ts == null) return '';
+  const d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
+  return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleTimeString('de-DE');
+}
+
+function kvRow(frag, key, value, cls) {
+  const k = document.createElement('span');
+  k.className = 'k';
+  k.textContent = key;
+  const v = document.createElement('span');
+  v.className = cls ? `v ${cls}` : 'v';
+  v.textContent = value;
+  frag.append(k, v);
+}
+
+async function refreshBridgeStatus() {
+  try {
+    const d = await apiGet('api/bridge/status');
+    state.lastBridgeErr = null;
+    const frag = document.createDocumentFragment();
+    kvRow(frag, 'Mod', d.alive ? 'online' : 'offline', d.alive ? 'ok' : 'err');
+    kvRow(frag, 'Version', d.modVersion || '–');
+    kvRow(frag, 'Armed', d.armed ? 'ja' : 'nein', d.armed ? 'ok' : undefined);
+    kvRow(frag, 'Queue', d.queue != null ? String(d.queue) : '–');
+    kvRow(frag, 'Spielerliste', d.playersStale ? 'veraltet' : 'aktuell', d.playersStale ? 'err' : 'ok');
+    if (d.presence) kvRow(frag, 'Presence', String(d.presence));
+    const errors = Array.isArray(d.recentErrors) ? d.recentErrors : [];
+    kvRow(frag, 'Fehler', errors.length ? `${errors.length} zuletzt` : 'keine', errors.length ? 'err' : 'ok');
+    for (const e of errors.slice(-5)) {
+      kvRow(frag, fmtTs(e.ts), e.message || JSON.stringify(e), 'err');
+    }
+    els.bridgeStatus.replaceChildren(frag);
+    els.pauseToggle.checked = d.paused === true;
+  } catch (err) {
+    if (state.lastBridgeErr !== err.message) {
+      state.lastBridgeErr = err.message;
+      logLine(`Bridge-Status: ${err.message}`, 'err');
+    }
+  }
+}
+
+async function refreshBridgeLogs() {
+  try {
+    const data = await apiGet('api/bridge/logs');
+    const entries = Array.isArray(data) ? data : (Array.isArray(data.logs) ? data.logs : []);
+    const frag = document.createDocumentFragment();
+    for (const e of entries.slice(-200)) {
+      const div = document.createElement('div');
+      if (typeof e === 'string') {
+        div.textContent = e;
+      } else if (e && typeof e === 'object') {
+        const level = e.level != null ? String(e.level) : '';
+        const raw = e.msg ?? e.message ?? '';
+        const msg = typeof raw === 'string' && raw ? raw : JSON.stringify(e);
+        div.textContent = `${fmtTs(e.ts)} ${level ? `[${level}] ` : ''}${msg}`.trim();
+        if (/err/i.test(level)) div.className = 'err';
+      } else {
+        div.textContent = String(e);
+      }
+      frag.appendChild(div);
+    }
+    const box = els.bridgeLogs;
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+    box.replaceChildren(frag);
+    if (atBottom) box.scrollTop = box.scrollHeight;
+  } catch {
+    // Fehler bereits über refreshBridgeStatus sichtbar
+  }
+}
+
+function logsTick() {
+  refreshBridgeStatus();
+  refreshBridgeLogs();
+}
+
+function startLogsPolling() {
+  logsTick();
+  state.logsTimer = setInterval(logsTick, 5000);
+}
+
+function stopLogsPolling() {
+  if (state.logsTimer) {
+    clearInterval(state.logsTimer);
+    state.logsTimer = null;
+  }
+}
+
+async function togglePause() {
+  const paused = els.pauseToggle.checked;
+  els.pauseToggle.disabled = true;
+  try {
+    await apiPost('api/bridge/pause', { paused });
+    logLine(paused ? 'Twitch-Trolls pausiert.' : 'Twitch-Trolls fortgesetzt.', 'ok');
+  } catch (err) {
+    els.pauseToggle.checked = !paused;
+    logLine(`Pause: ${err.message}`, 'err');
+  }
+  els.pauseToggle.disabled = false;
+}
+
+// --- RCON-Konsole ---
+
+function rconPrint(text, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = text;
+  els.rconOut.appendChild(div);
+  while (els.rconOut.children.length > 400) els.rconOut.firstChild.remove();
+  els.rconOut.scrollTop = els.rconOut.scrollHeight;
+}
+
+async function rconSubmit() {
+  const command = els.rconIn.value.trim();
+  if (!command) return;
+  state.rconHistory.push(command);
+  state.rconHistIdx = state.rconHistory.length;
+  els.rconIn.value = '';
+  rconPrint(`> ${command}`, 'cmd');
+  els.rconSend.disabled = true;
+  try {
+    const d = await apiPost('api/rcon', { command });
+    rconPrint(d.response || '(keine Antwort)');
+  } catch (err) {
+    rconPrint(`Fehler: ${err.message}`, 'err');
+  }
+  els.rconSend.disabled = false;
+  els.rconIn.focus();
+}
+
+function rconKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    rconSubmit();
+  } else if (e.key === 'ArrowUp') {
+    if (!state.rconHistory.length) return;
+    e.preventDefault();
+    state.rconHistIdx = Math.max(0, state.rconHistIdx - 1);
+    els.rconIn.value = state.rconHistory[state.rconHistIdx] || '';
+  } else if (e.key === 'ArrowDown') {
+    if (!state.rconHistory.length) return;
+    e.preventDefault();
+    state.rconHistIdx = Math.min(state.rconHistory.length, state.rconHistIdx + 1);
+    els.rconIn.value = state.rconHistory[state.rconHistIdx] || '';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
+// Tabs
+els.tabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (btn) setTab(btn.dataset.tab);
+});
+
+// Items-Tab
 let searchTimer;
 els.search.addEventListener('input', () => {
   clearTimeout(searchTimer);
@@ -483,6 +1246,8 @@ els.clearCart.addEventListener('click', () => {
 els.refreshPlayers.addEventListener('click', loadPlayers);
 els.playerSelect.addEventListener('change', () => { updateSpawnButton(); renderTpPlayers(); });
 els.spawn.addEventListener('click', spawn);
+
+// Teleport
 els.tpGetpos.addEventListener('click', tpGetPos);
 els.tpGo.addEventListener('click', tpGo);
 els.tpToplayer.addEventListener('click', tpToPlayer);
@@ -490,7 +1255,59 @@ els.tpSave.addEventListener('click', tpSaveSpot);
 els.tpDel.addEventListener('click', tpDeleteSpot);
 els.tpSpots.addEventListener('change', tpSelectSpot);
 
+// Spieler-Tab
+els.unbanBtn.addEventListener('click', unban);
+els.hpRange.addEventListener('input', () => { els.hpNum.value = els.hpRange.value; });
+els.hpNum.addEventListener('change', () => {
+  const pct = clampInt(els.hpNum.value, 1, 100, 100);
+  els.hpNum.value = pct;
+  els.hpRange.value = pct;
+});
+els.hpSet.addEventListener('click', hpApply);
+els.rnApply.addEventListener('click', renameApply);
+els.rnReset.addEventListener('click', renameReset);
+els.riBtn.addEventListener('click', removeItem);
+els.dropBtn.addEventListener('click', dropRandomSlot);
+
+// Pals-Tab
+els.spBtn.addEventListener('click', spawnPal);
+els.scBtn.addEventListener('click', spawnCaughtPal);
+els.ghSet.addEventListener('click', () => setGameHour(clampInt(els.ghHour.value, 0, 23, 9)));
+els.ghDay.addEventListener('click', () => setGameHour(9));
+els.ghNight.addEventListener('click', () => setGameHour(22));
+els.wwBtn.addEventListener('click', wildWrath);
+
+// Server-Tab
+els.annBtn.addEventListener('click', srvAnnounce);
+els.annMsg.addEventListener('keydown', (e) => { if (e.key === 'Enter') srvAnnounce(); });
+els.saveBtn.addEventListener('click', srvSave);
+els.sdBtn.addEventListener('click', srvShutdown);
+els.stopBtn.addEventListener('click', srvStop);
+let settingsTimer;
+els.setSearch.addEventListener('input', () => {
+  clearTimeout(settingsTimer);
+  settingsTimer = setTimeout(renderSettings, 120);
+});
+
+// Logs-Tab
+els.pauseToggle.addEventListener('change', togglePause);
+els.rconIn.addEventListener('keydown', rconKeydown);
+els.rconSend.addEventListener('click', rconSubmit);
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+// Stunden-Auswahl 0-23 für die Weltzeit
+for (let h = 0; h < 24; h++) {
+  const opt = document.createElement('option');
+  opt.value = String(h);
+  opt.textContent = `${h}:00 Uhr`;
+  els.ghHour.appendChild(opt);
+}
+els.ghHour.value = '9';
+
 loadItems();
-loadPlayers();
 renderSpots();
+loadConfig().then(loadPlayers);
 setInterval(loadPlayers, 60000);

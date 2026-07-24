@@ -184,15 +184,29 @@ async function bridgeFetch(pathName, options = {}, timeoutMs = 10000) {
   }
 }
 
+// Die Feature-Flags entscheiden, welche Panels die UI anzeigt. Bridge (In-Game-
+// Ops) und offizielle REST API (Server-Administration) sind unabhängig
+// voneinander konfigurierbar und können gleichzeitig aktiv sein.
+const BRIDGE_OK = Boolean(BRIDGE_URL && BRIDGE_TOKEN);
+const SERVER_ADMIN = Boolean(PALWORLD_API_URL && PALWORLD_API_PASS);
+
 app.get('/api/config', (req, res) => {
   res.json({
     backend: BACKEND,
     apiConfigured: BACKEND === 'paladdon'
-      ? Boolean(BRIDGE_URL && BRIDGE_TOKEN)
+      ? BRIDGE_OK
       : Boolean(PALWORLD_API_URL && PALWORLD_API_PASS),
     rconConfigured: Boolean(RCON_HOST && RCON_PASSWORD),
     rconHost: RCON_HOST ? `${RCON_HOST}:${RCON_PORT}` : null,
     bridge: BRIDGE_URL || null,
+    features: {
+      give: true,
+      teleport: BACKEND === 'paladdon' && BRIDGE_OK,
+      palOps: BACKEND === 'paladdon' && BRIDGE_OK,
+      bridgeAdmin: BACKEND === 'paladdon' && BRIDGE_OK,
+      serverAdmin: SERVER_ADMIN,
+      rcon: BACKEND !== 'paladdon' && Boolean(RCON_HOST && RCON_PASSWORD),
+    },
   });
 });
 
@@ -205,11 +219,23 @@ app.get('/api/players', async (req, res) => {
       const status = await bridgeFetch('/api/status');
       const mod = status.mod || {};
       const modStatus = mod.status || {};
-      const players = (modStatus.players || []).map((p) => ({
-        name: p.name,
-        userId: p.uid,
-        level: p.level ?? null,
-      }));
+      const players = (modStatus.players || []).map((p) => {
+        const ids = p.ids || {};
+        // Die REST API (Kick/Ban) erwartet die Steam-ID (steam_<id64>); der
+        // Mod liefert sie als einen der Reflection-ID-Werte mit.
+        const steamId = Object.values(ids).find(
+          (v) => typeof v === 'string' && /^steam_[A-Za-z0-9]+$/i.test(v),
+        ) || null;
+        return {
+          name: p.name,
+          userId: p.uid,
+          level: p.level ?? null,
+          steamId,
+          pos: p.pos && typeof p.pos.x === 'number'
+            ? { x: p.pos.x, y: p.pos.y, z: p.pos.z }
+            : null,
+        };
+      });
       return res.json({
         players,
         modAlive: mod.alive !== false,
@@ -396,6 +422,352 @@ app.post('/api/teleport', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Offizielle Palworld REST API (Server-Administration)
+// Funktioniert unabhängig vom Backend, sobald PALWORLD_API_URL +
+// PALWORLD_API_PASS gesetzt sind (auf dem palchaos-Server läuft die REST API
+// containerintern auf Port 8212).
+// ---------------------------------------------------------------------------
+
+async function palApi(pathName, options = {}, timeoutMs = 10000) {
+  const auth = Buffer.from(`${PALWORLD_API_USER}:${PALWORLD_API_PASS}`).toString('base64');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${PALWORLD_API_URL}/v1/api${pathName}`, {
+      ...options,
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      signal: controller.signal,
+    });
+    if (resp.status === 401) throw new Error('Palworld REST API: falsches Admin-Passwort (401)');
+    if (!resp.ok) throw new Error(`Palworld REST API antwortet mit HTTP ${resp.status}`);
+    // Aktions-Endpunkte antworten mit Text ("Successfully saved the world.")
+    const text = await resp.text();
+    try { return JSON.parse(text); } catch { return { message: text.trim() }; }
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Palworld REST API: Timeout');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function requireServerAdmin(res) {
+  if (!SERVER_ADMIN) {
+    res.status(503).json({ error: 'PALWORLD_API_URL/PALWORLD_API_PASS ist nicht konfiguriert' });
+    return false;
+  }
+  return true;
+}
+
+for (const p of ['info', 'metrics', 'settings', 'gamedata']) {
+  app.get(`/api/server/${p}`, async (req, res) => {
+    if (!requireServerAdmin(res)) return;
+    try {
+      res.json(await palApi(`/${p}`));
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+}
+
+app.post('/api/server/announce', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  if (!message || message.length > 300) {
+    return res.status(400).json({ error: 'message muss 1-300 Zeichen lang sein' });
+  }
+  try {
+    res.json(await palApi('/announce', { method: 'POST', body: JSON.stringify({ message }) }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/server/save', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  try {
+    res.json(await palApi('/save', { method: 'POST' }, 60000));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/server/shutdown', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  const waittime = parseInt(req.body?.waittime, 10);
+  if (!Number.isInteger(waittime) || waittime < 1 || waittime > 3600) {
+    return res.status(400).json({ error: 'waittime muss 1-3600 Sekunden sein' });
+  }
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
+  try {
+    res.json(await palApi('/shutdown', {
+      method: 'POST',
+      body: JSON.stringify({ waittime, ...(message ? { message } : {}) }),
+    }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/server/stop', async (req, res) => {
+  if (!requireServerAdmin(res)) return;
+  try {
+    res.json(await palApi('/stop', { method: 'POST' }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Kick/Ban/Unban: die REST API erwartet die Plattform-UserId (z. B. steam_<id64>)
+for (const action of ['kick', 'ban', 'unban']) {
+  app.post(`/api/server/${action}`, async (req, res) => {
+    if (!requireServerAdmin(res)) return;
+    const userid = req.body?.userId;
+    if (typeof userid !== 'string' || !UID_RE.test(userid)) {
+      return res.status(400).json({ error: 'Ungültige userId' });
+    }
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
+    try {
+      res.json(await palApi(`/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ userid, ...(message && action !== 'unban' ? { message } : {}) }),
+      }));
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Bridge-Ops (PalChaos-Mod): validierte Whitelist weiterer In-Game-Operationen
+// ---------------------------------------------------------------------------
+
+const clampInt = (v, min, max, def) => {
+  const n = parseInt(v, 10);
+  if (!Number.isInteger(n)) return def;
+  return Math.max(min, Math.min(max, n));
+};
+const ID_RE = /^[A-Za-z0-9_]+$/;
+
+// target: 'required' = Spieler nötig, 'optional' = wird mitgeschickt wenn
+// vorhanden (z. B. announce), Rest der Params wird validiert/geklemmt.
+const BRIDGE_OPS = {
+  announce: {
+    target: 'optional',
+    build(b) {
+      const message = typeof b.message === 'string' ? b.message.trim() : '';
+      if (!message || message.length > 300) return { error: 'message muss 1-300 Zeichen lang sein' };
+      return { step: { op: 'announce', message } };
+    },
+  },
+  setGameHour: {
+    target: 'optional',
+    build(b) {
+      const hour = clampInt(b.hour, 0, 23, null);
+      if (hour === null) return { error: 'hour muss 0-23 sein' };
+      return { step: { op: 'setGameHour', hour } };
+    },
+  },
+  setHpRate: {
+    target: 'required',
+    build(b) {
+      const rate = Number(b.rate);
+      if (!Number.isFinite(rate) || rate < 0.01 || rate > 1) {
+        return { error: 'rate muss zwischen 0.01 und 1 liegen' };
+      }
+      return { step: { op: 'setHpRate', rate } };
+    },
+  },
+  wildWrath: {
+    target: 'required',
+    build(b) {
+      return {
+        step: {
+          op: 'wildWrath',
+          radiusM: clampInt(b.radiusM, 10, 200, 60),
+          maxPals: clampInt(b.maxPals, 1, 15, 8),
+        },
+      };
+    },
+  },
+  renamePartyPals: {
+    target: 'required',
+    build(b) {
+      const reset = b.reset === true;
+      const name = typeof b.name === 'string' ? b.name.trim() : '';
+      if (!reset && (!name || name.length > 40)) {
+        return { error: 'name muss 1-40 Zeichen lang sein' };
+      }
+      return {
+        step: {
+          op: 'renamePartyPals',
+          name,
+          maxPals: clampInt(b.maxPals, 1, 5, reset ? 5 : 1),
+          reset,
+          announceResult: b.announceResult === true,
+        },
+      };
+    },
+  },
+  removeItem: {
+    target: 'required',
+    build(b) {
+      if (typeof b.itemId !== 'string' || !ID_RE.test(b.itemId)) {
+        return { error: 'Ungültige itemId' };
+      }
+      return { step: { op: 'removeItem', itemId: b.itemId, count: clampInt(b.count, 1, 9999, 1) } };
+    },
+  },
+  dropRandomSlot: {
+    target: 'required',
+    build() { return { step: { op: 'dropRandomSlot' } }; },
+  },
+  spawnPal: {
+    target: 'required',
+    timeoutMs: 90000, // Spawn-Verify im Mod dauert bis ~61 s, Bridge wartet 75 s
+    build(b) {
+      if (typeof b.palId !== 'string' || !ID_RE.test(b.palId)) {
+        return { error: 'Ungültige palId' };
+      }
+      const step = {
+        op: 'spawnPal',
+        palId: b.palId,
+        count: clampInt(b.count, 1, 10, 1),
+        level: clampInt(b.level, 1, 65, 1),
+      };
+      const despawn = clampInt(b.despawnAfterSec, 5, 600, null);
+      if (despawn !== null) step.despawnAfterSec = despawn;
+      return { step };
+    },
+  },
+  spawnCaughtPal: {
+    target: 'required',
+    timeoutMs: 90000,
+    build(b) {
+      const step = {
+        op: 'spawnCaughtPal',
+        count: clampInt(b.count, 1, 10, 3),
+        levelOffset: clampInt(b.levelOffset, -50, 50, 5),
+      };
+      const despawn = clampInt(b.despawnAfterSec, 5, 600, null);
+      if (despawn !== null) step.despawnAfterSec = despawn;
+      return { step };
+    },
+  },
+};
+
+app.post('/api/bridge/op', async (req, res) => {
+  if (!requireBridge(res)) return;
+  const body = req.body || {};
+  const spec = BRIDGE_OPS[body.op];
+  if (!spec) return res.status(400).json({ error: `Unbekannte Operation: ${body.op}` });
+  let target;
+  if (typeof body.userId === 'string' && UID_RE.test(body.userId)) {
+    target = { uid: body.userId };
+  } else if (spec.target === 'required') {
+    return res.status(400).json({ error: 'Ungültige userId' });
+  }
+  const built = spec.build(body);
+  if (built.error) return res.status(400).json({ error: built.error });
+  try {
+    const resp = await bridgeFetch('/api/command', {
+      method: 'POST',
+      body: JSON.stringify({ steps: [built.step], ...(target ? { target } : {}) }),
+    }, spec.timeoutMs || 30000);
+    const r = (resp.results || [])[0];
+    if (!r || r.ok === false) {
+      return res.status(502).json({ error: (r && r.error) || resp.error || `${body.op} fehlgeschlagen` });
+    }
+    res.json({ ok: true, data: r.data ?? null });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Bridge-Administration: Mod-Status, Logs, Pause
+// ---------------------------------------------------------------------------
+
+app.get('/api/bridge/status', async (req, res) => {
+  if (!requireBridge(res)) return;
+  try {
+    const status = await bridgeFetch('/api/status');
+    const mod = status.mod || {};
+    const s = mod.status || {};
+    res.json({
+      alive: mod.alive !== false,
+      modVersion: s.modVersion || null,
+      armed: s.armed === true,
+      allowEval: s.allowEval === true,
+      ops: s.ops || [],
+      playersStale: s.playersStale === true,
+      recentErrors: s.recentErrors || [],
+      queue: status.queue ?? null,
+      paused: status.config?.paused === true,
+      presence: status.presence?.state || null,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/api/bridge/logs', async (req, res) => {
+  if (!requireBridge(res)) return;
+  try {
+    res.json(await bridgeFetch('/api/logs'));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/bridge/pause', async (req, res) => {
+  if (!requireBridge(res)) return;
+  if (typeof req.body?.paused !== 'boolean') {
+    return res.status(400).json({ error: 'paused muss true oder false sein' });
+  }
+  try {
+    res.json(await bridgeFetch('/api/pause', {
+      method: 'POST',
+      body: JSON.stringify({ paused: req.body.paused }),
+    }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// RCON-Konsole (nur PalDefender-Backend)
+// ---------------------------------------------------------------------------
+
+app.post('/api/rcon', async (req, res) => {
+  if (BACKEND === 'paladdon') {
+    return res.status(501).json({ error: 'RCON ist nur im PalDefender-Backend verfügbar' });
+  }
+  if (!RCON_HOST || !RCON_PASSWORD) {
+    return res.status(503).json({ error: 'RCON_HOST/RCON_PASSWORD ist nicht konfiguriert' });
+  }
+  const command = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
+  // eslint-disable-next-line no-control-regex
+  if (!command || command.length > 250 || /[\x00-\x1f]/.test(command)) {
+    return res.status(400).json({ error: 'command muss 1-250 Zeichen ohne Steuerzeichen sein' });
+  }
+  const rcon = new Rcon(RCON_HOST, RCON_PORT, RCON_PASSWORD);
+  try {
+    await rcon.connect();
+    const response = await rcon.command(command);
+    res.json({ response: response.trim() });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  } finally {
+    rcon.close();
   }
 });
 
