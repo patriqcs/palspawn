@@ -33,6 +33,7 @@ const els = {
   count: $('#result-count'),
   // Cart-Sidebar
   cartItems: $('#cart-items'),
+  cartPlayer: $('#cart-player'),
   clearCart: $('#clear-cart'),
   spawn: $('#spawn'),
   log: $('#log'),
@@ -423,6 +424,30 @@ function updateSpawnButton() {
 // Spieler
 // ---------------------------------------------------------------------------
 
+// Header- und Cart-Dropdown zeigen dieselbe Spielerliste und bleiben synchron.
+function fillPlayerSelect(sel) {
+  const prev = sel.value;
+  sel.replaceChildren();
+  if (!state.players.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '– keine Spieler online –';
+    sel.appendChild(opt);
+    return;
+  }
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '– Spieler wählen –';
+  sel.appendChild(placeholder);
+  for (const p of state.players) {
+    const opt = document.createElement('option');
+    opt.value = p.userId;
+    opt.textContent = p.level != null ? `${p.name} (Level ${p.level})` : p.name;
+    sel.appendChild(opt);
+  }
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
 async function loadPlayers() {
   els.serverStatus.textContent = '…';
   els.serverStatus.className = 'status';
@@ -431,28 +456,8 @@ async function loadPlayers() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
     state.players = data.players;
-    const prev = els.playerSelect.value;
-    els.playerSelect.replaceChildren();
-    if (!state.players.length) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '– keine Spieler online –';
-      els.playerSelect.appendChild(opt);
-    } else {
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = '– Spieler wählen –';
-      els.playerSelect.appendChild(placeholder);
-      for (const p of state.players) {
-        const opt = document.createElement('option');
-        opt.value = p.userId;
-        opt.textContent = p.level != null ? `${p.name} (Level ${p.level})` : p.name;
-        els.playerSelect.appendChild(opt);
-      }
-      if ([...els.playerSelect.options].some((o) => o.value === prev)) {
-        els.playerSelect.value = prev;
-      }
-    }
+    fillPlayerSelect(els.playerSelect);
+    fillPlayerSelect(els.cartPlayer);
     if (data.modAlive === false) {
       els.serverStatus.textContent = 'Mod offline!';
       els.serverStatus.className = 'status err';
@@ -464,11 +469,13 @@ async function loadPlayers() {
       els.serverStatus.className = 'status ok';
     }
   } catch (err) {
-    els.playerSelect.replaceChildren();
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = '– Server nicht erreichbar –';
-    els.playerSelect.appendChild(opt);
+    for (const sel of [els.playerSelect, els.cartPlayer]) {
+      sel.replaceChildren();
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '– Server nicht erreichbar –';
+      sel.appendChild(opt);
+    }
     els.serverStatus.textContent = err.message;
     els.serverStatus.className = 'status err';
   }
@@ -599,6 +606,8 @@ async function kickBan(action, p, pid) {
     await apiPost(`api/server/${action}`, {
       userId: pid,
       ...(message.trim() ? { message: message.trim() } : {}),
+      // Beim Bannen den Namen mitgeben — der Server merkt ihn sich für die Bann-Liste
+      ...(action === 'ban' && p.name ? { name: p.name } : {}),
     });
     logLine(`${p.name} ${action === 'kick' ? 'gekickt' : 'gebannt'}.`, 'ok');
     loadPlayers();
@@ -623,7 +632,7 @@ async function loadBanlist() {
     for (const b of banned) {
       const opt = document.createElement('option');
       opt.value = b.userId;
-      opt.textContent = b.userId;
+      opt.textContent = b.name ? `${b.name} (${b.userId})` : b.userId;
       els.unbanSelect.appendChild(opt);
     }
     if ([...els.unbanSelect.options].some((o) => o.value === prev)) els.unbanSelect.value = prev;
@@ -1336,13 +1345,17 @@ els.clearCart.addEventListener('click', () => {
   render();
 });
 els.refreshPlayers.addEventListener('click', loadPlayers);
-els.playerSelect.addEventListener('change', () => {
+// Header- und Cart-Auswahl synchron halten; Wechsel invalidiert die Inventaranzeige
+function onPlayerChange(source) {
+  const other = source === els.playerSelect ? els.cartPlayer : els.playerSelect;
+  if ([...other.options].some((o) => o.value === source.value)) other.value = source.value;
   updateSpawnButton();
   renderTpPlayers();
-  // Inventaranzeige gehört zum vorher gewählten Spieler → ausblenden
   els.invBox.hidden = true;
   els.invBox.replaceChildren();
-});
+}
+els.playerSelect.addEventListener('change', () => onPlayerChange(els.playerSelect));
+els.cartPlayer.addEventListener('change', () => onPlayerChange(els.cartPlayer));
 els.spawn.addEventListener('click', spawn);
 
 // Teleport

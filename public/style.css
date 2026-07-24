@@ -409,6 +409,15 @@ td.copy:hover { color: var(--accent); }
 }
 .cart-row .rm:hover { color: var(--danger); background: none; }
 
+.cart-player {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.cart-player select { flex: 1; min-width: 0; }
+
 .cart-footer { display: flex; gap: 0.5rem; }
 
 /* ---------- teleport ---------- */

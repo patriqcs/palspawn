@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -263,6 +263,10 @@
     <div id="cart-items" class="cart-items">
       <p class="empty">Noch nichts ausgewählt.<br>Klicke links auf ein Item.</p>
     </div>
+    <div class="cart-player">
+      <label for="cart-player">Spawnen an:</label>
+      <select id="cart-player"><option value="">– Server wird abgefragt –</option></select>
+    </div>
     <div class="cart-footer">
       <button id="clear-cart" class="secondary">Leeren</button>
       <button id="spawn" disabled>Spawnen</button>
@@ -272,6 +276,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

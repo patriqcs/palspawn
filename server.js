@@ -24,6 +24,25 @@ const APP_PASS = process.env.APP_PASS || '';
 // banlist.txt des Servers (read-only ins Image gemountet) — die REST API kann
 // bannen/entbannen, aber die Liste nicht auslesen, deshalb direkt aus der Datei.
 const BANLIST_FILE = process.env.BANLIST_FILE || '';
+// Persistente Daten (Bann-Namen): banlist.txt enthält nur IDs, deshalb merkt
+// sich palspawn beim Bannen den Spielernamen selbst.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const BAN_NAMES_FILE = path.join(DATA_DIR, 'ban-names.json');
+
+function readBanNames() {
+  try { return JSON.parse(fs.readFileSync(BAN_NAMES_FILE, 'utf8')); } catch { return {}; }
+}
+
+function saveBanName(userid, name) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const map = readBanNames();
+    map[userid] = { name, ts: Date.now() };
+    fs.writeFileSync(BAN_NAMES_FILE, JSON.stringify(map, null, 2));
+  } catch (err) {
+    console.warn(`Bann-Name nicht speicherbar: ${err.message}`);
+  }
+}
 
 const app = express();
 app.use(express.json());
@@ -543,12 +562,18 @@ app.get('/api/server/banlist', async (req, res) => {
     } catch (err) {
       if (err.code !== 'ENOENT') throw err; // Datei existiert erst nach dem ersten Bann
     }
+    const names = readBanNames();
     const banned = text.split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
         const [userId, playerId] = line.split(',');
-        return { userId: userId.trim(), playerId: (playerId || '').trim() || null };
+        const uid = userId.trim();
+        return {
+          userId: uid,
+          playerId: (playerId || '').trim() || null,
+          name: names[uid]?.name || null,
+        };
       })
       .filter((b) => b.userId);
     res.json({ banned });
@@ -567,10 +592,15 @@ for (const action of ['kick', 'ban', 'unban']) {
     }
     const message = typeof req.body?.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
     try {
-      res.json(await palApi(`/${action}`, {
+      const result = await palApi(`/${action}`, {
         method: 'POST',
         body: JSON.stringify({ userid, ...(message && action !== 'unban' ? { message } : {}) }),
-      }));
+      });
+      // Beim Bannen den Spielernamen merken — banlist.txt enthält nur die ID
+      if (action === 'ban' && typeof req.body?.name === 'string' && req.body.name.trim()) {
+        saveBanName(userid, req.body.name.trim().slice(0, 60));
+      }
+      res.json(result);
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
