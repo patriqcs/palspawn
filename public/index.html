@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PalSpawn – Palworld Admin-Tool</title>
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 <link rel="icon" href="icons/T_itemicon_PalSphere.webp" type="image/webp">
 </head>
 <body>
@@ -114,7 +114,9 @@
             <input id="ri-id" type="text" list="item-ids" placeholder="Item-ID" autocomplete="off">
             <label>Menge <input id="ri-count" type="number" min="1" max="9999" value="1"></label>
             <button id="ri-btn" class="danger">Entfernen</button>
+            <button id="inv-load" class="secondary" title="Inventar des gewählten Spielers auslesen">Inventar anzeigen</button>
           </div>
+          <div id="inv-box" class="inv-box" hidden></div>
           <div class="form-row">
             <button id="drop-btn" class="danger">Zufälliges Item fallen lassen</button>
           </div>
@@ -268,6 +270,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

@@ -630,6 +630,10 @@ const BRIDGE_OPS = {
     target: 'required',
     build() { return { step: { op: 'dropRandomSlot' } }; },
   },
+  listInventory: {
+    target: 'required',
+    build() { return { step: { op: 'listInventory' } }; },
+  },
   spawnPal: {
     target: 'required',
     timeoutMs: 90000, // Spawn-Verify im Mod dauert bis ~61 s, Bridge wartet 75 s

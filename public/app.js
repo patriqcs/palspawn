@@ -65,6 +65,8 @@ const els = {
   riId: $('#ri-id'),
   riCount: $('#ri-count'),
   riBtn: $('#ri-btn'),
+  invLoad: $('#inv-load'),
+  invBox: $('#inv-box'),
   dropBtn: $('#drop-btn'),
   itemIds: $('#item-ids'),
   // Pals-Tab
@@ -849,6 +851,64 @@ async function removeItem() {
     { okMsg: `${count}× ${label} entfernt.`, btn: els.riBtn });
 }
 
+// Inventar des gewählten Spielers auslesen (listInventory-Op) und als
+// klickbare Liste rendern — Klick übernimmt Item-ID + Menge ins Entfernen-Formular.
+async function loadInventory() {
+  if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
+  els.invBox.hidden = false;
+  els.invBox.textContent = 'Inventar wird ausgelesen…';
+  const data = await bridgeOp('listInventory', {}, { btn: els.invLoad });
+  if (!data) {
+    els.invBox.textContent = 'Inventar konnte nicht ausgelesen werden (siehe Log).';
+    return;
+  }
+  const slots = (data.data && Array.isArray(data.data.slots)) ? data.data.slots : [];
+  // Gleiche Item-IDs über mehrere Slots aufsummieren
+  const agg = new Map();
+  for (const s of slots) {
+    if (typeof s.itemId !== 'string' || !Number.isFinite(s.count)) continue;
+    agg.set(s.itemId, (agg.get(s.itemId) || 0) + s.count);
+  }
+  if (!agg.size) {
+    els.invBox.textContent = 'Inventar ist leer.';
+    return;
+  }
+  const rows = [...agg.entries()].map(([id, count]) => {
+    const item = state.items.find((i) => i.id === id);
+    return { id, count, item, label: item ? item.name_de : id };
+  }).sort((a, b) => a.label.localeCompare(b.label, 'de'));
+
+  const frag = document.createDocumentFragment();
+  for (const r of rows) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'inv-row';
+    row.title = `${r.id} – Klick übernimmt Item + Menge ins Entfernen-Formular`;
+    if (r.item) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = `icons/${r.item.icon}`;
+      img.alt = '';
+      row.appendChild(img);
+    }
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = r.label;
+    const ct = document.createElement('span');
+    ct.className = 'ct';
+    ct.textContent = `${r.count}×`;
+    row.append(nm, ct);
+    row.addEventListener('click', () => {
+      els.riId.value = r.id;
+      els.riCount.value = r.count;
+      logLine(`${r.label} (${r.count}×) ins Entfernen-Formular übernommen.`, 'info');
+    });
+    frag.appendChild(row);
+  }
+  els.invBox.replaceChildren(frag);
+  logLine(`Inventar von ${selectedPlayerName()}: ${rows.length} verschiedene Items.`, 'ok');
+}
+
 async function dropRandomSlot() {
   if (!els.playerSelect.value) return logLine('Bitte zuerst oben einen Spieler auswählen.', 'err');
   if (!window.confirm(`${selectedPlayerName()} lässt einen zufälligen Inventar-Slot fallen. Sicher?`)) return;
@@ -1244,7 +1304,13 @@ els.clearCart.addEventListener('click', () => {
   render();
 });
 els.refreshPlayers.addEventListener('click', loadPlayers);
-els.playerSelect.addEventListener('change', () => { updateSpawnButton(); renderTpPlayers(); });
+els.playerSelect.addEventListener('change', () => {
+  updateSpawnButton();
+  renderTpPlayers();
+  // Inventaranzeige gehört zum vorher gewählten Spieler → ausblenden
+  els.invBox.hidden = true;
+  els.invBox.replaceChildren();
+});
 els.spawn.addEventListener('click', spawn);
 
 // Teleport
@@ -1267,6 +1333,7 @@ els.hpSet.addEventListener('click', hpApply);
 els.rnApply.addEventListener('click', renameApply);
 els.rnReset.addEventListener('click', renameReset);
 els.riBtn.addEventListener('click', removeItem);
+els.invLoad.addEventListener('click', loadInventory);
 els.dropBtn.addEventListener('click', dropRandomSlot);
 
 // Pals-Tab
